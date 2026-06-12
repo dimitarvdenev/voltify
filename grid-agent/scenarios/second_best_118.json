@@ -1,0 +1,22 @@
+{
+  "excluded_substation": 67,
+  "second_best": {
+    "action_id": "a-068-1",
+    "substation": 68,
+    "description": "bus-split at substation 68",
+    "simulated_max_rho": 0.782,
+    "simulated_n_overloaded": 0,
+    "reconnects_lines": [],
+    "switching_ops": 1,
+    "cost_class": "switching (~free)"
+  },
+  "applied": {
+    "applied": true,
+    "max_rho": 0.79,
+    "n_overloaded": 0,
+    "stable_steps_checked": 20,
+    "stable": true,
+    "worst_rho_during_check": 0.896
+  },
+  "verified_from": "verify_second_best.py"
+}

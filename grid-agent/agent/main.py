@@ -83,6 +83,7 @@ def main():
         }
         if kind == "tool":
             entry["tool"] = payload["tool"]
+            entry["arguments"] = payload["arguments"]
             entry["summary"] = payload["result"][:200]
             if payload["tool"] == "apply_action":
                 tag = f"step_{len(writer.steps)}_applied"
