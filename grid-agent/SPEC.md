@@ -209,10 +209,17 @@ do-nothing steps on a copy/forecast where Grid2Op allows; the proven arc
 showed 20+ stable steps after the sub-67 split.
 
 **Redispatch:** not a separate tool. The demo's planted "why not redispatch?"
-is answered from the cost table plus a small fixed set of redispatch probes
-the search tool can include on request — only if implementation time allows;
-otherwise the agent answers from the case14 precedent framing in the prompt
-(clearly attributed as prior measurement, per PRD §4.5). Decide at hour ~6.
+is answered honestly: the system prompt carries a hard rule that action
+types not simulated in *this* run must be named as such — "I haven't
+simulated redispatch on this grid" — and that results from other grids or
+past studies are never quoted as numbers. The agent argues from the cost
+table plus its own switching results (which it did measure). The case14
+rho-1.9 figure stays out of the prompt entirely: a 4-bit model cannot be
+trusted to keep an "attributed as prior measurement" qualifier attached,
+and one dropped qualifier on stage breaks the grounding invariant in front
+of a judge. Upgrade path (decide at hour ~6, after Task-12 rehearsal): if
+the honest answer sounds weak, add 2-3 redispatch probes to the search
+tool so the comparison is grounded in this run's solver results.
 
 ## 4. Agent loop (`main.py` + `llm.py`)
 

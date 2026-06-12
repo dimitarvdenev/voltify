@@ -804,6 +804,12 @@ Hard rules:
   grid state. If max_rho is still >= 1.0, search again with a wider
   scope (one more hop of substations). At most 2 apply attempts; if the
   grid is still insecure, say so honestly.
+- If asked about an action type you have NOT simulated in this run
+  (e.g. redispatch, curtailment), say so explicitly: "I have not
+  simulated redispatch on this grid." Never quote results from other
+  grids, past studies, or your training data as if they were
+  measurements. You may compare costs qualitatively (see cost guidance)
+  and cite your own measured switching results.
 - If the operator reports a constraint in plain language (e.g. "crew on
   site at substation 67"), translate it into exclude_substations on
   your next search and say you did so.
@@ -1420,9 +1426,13 @@ rule, or shrink tool output further) and re-run.
 - [ ] **Step 4: Test the follow-up beat**
 
 Send: `Why not redispatch instead?`
-Expected: agent answers from cost table + its own search results, no new
-hallucinated numbers. (Redispatch probes are deliberately NOT a tool —
-SPEC §3.4 decision point: only add them if this answer is unconvincing
+Expected: agent states explicitly that redispatch was NOT simulated in
+this run, then argues from the cost table and its own measured switching
+results (rho 0.80 at ~zero cost). Any number not present in a tool result
+— especially any rho figure for redispatch — is a FAIL: fix the system
+prompt's not-simulated rule and re-run. (Redispatch probes are
+deliberately NOT a tool — SPEC §3.4 upgrade path: add 2-3 grounded probes
+to the search tool only if this honest answer sounds weak in rehearsal
 AND time remains at hour ~6.)
 
 - [ ] **Step 5: Record the result**
@@ -1826,7 +1836,11 @@ git commit -m "feat: benchmark table - agent vs scoped brute-force vs do-nothing
    scoped a 38-minute search space down to 3 seconds.
 
 2. `Why not redispatch instead?`
-   → expect: cost-table answer grounded in its own simulation results.
+   → expect: agent says redispatch was not simulated this run, then argues
+     cost: switching reached rho 0.80 at ~zero cost, redispatch costs
+     60-100 EUR/MWh. If a judge asks "is that number from this grid?" —
+     every quoted rho is in the tool feed on screen. That honesty IS the
+     pitch; don't apologize for it.
 
 3. (Reset the run: restart agent.main) then after the search step, send:
    `Hold on - substation 67 is unavailable, maintenance crew on site.`
