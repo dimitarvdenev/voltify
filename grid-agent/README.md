@@ -28,6 +28,26 @@ uv pip install --python .venv/bin/python -r requirements.txt
 Note: system python3 is 3.9 (too old), homebrew is 3.14 (too new for wheels).
 Use uv-managed 3.12.
 
+## Demo
+
+From this directory, run:
+
+```bash
+make demo
+```
+
+Then open `http://localhost:8000/ui/index.html`. The Makefile starts the
+static UI server and runs the agent in inbox mode so messages sent from the
+web input are consumed by the agent.
+
+Useful separate targets:
+
+```bash
+make ui      # serve only the web UI
+make agent   # run only the inbox agent
+make test    # run the test suite
+```
+
 ## Architecture sketch
 
 - **Env**: Grid2Op `l2rpn_case14_sandbox` (later: bigger L2RPN envs)
