@@ -1,0 +1,18 @@
+{
+  "env": "l2rpn_neurips_2020_track2_small",
+  "chronic_idx": 0,
+  "arc": "crisis-at-open",
+  "note": "Env opens inside the crisis (no injected outage needed). Verified by verify_118_arc.py follow-up run, 2026-06-12.",
+  "crisis_line_id": 177,
+  "crisis_line_subs": [115, 67],
+  "crisis_max_rho": 1.30,
+  "do_nothing_blackout_at_step": 4,
+  "scoped_subs": [64, 67, 68, 80, 115],
+  "actions_simulated": 88,
+  "actions_total_unitary": 72107,
+  "search_seconds": 3.0,
+  "rescue_substation": 67,
+  "rescued_max_rho_simulated": 0.796,
+  "rescued_max_rho_applied": 0.806,
+  "stable_steps_after_rescue": 20
+}

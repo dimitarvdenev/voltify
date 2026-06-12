@@ -39,10 +39,19 @@ defers to future work.
 
 ## 4. Core user journey (the demo arc — verified feasible in spike)
 
-1. Grid healthy (IEEE case14, max line loading rho 0.92).
-2. N-1 event: line 17 (substation 4→5) lost → 4 lines overloaded, rho 1.91.
-3. Agent inspects state, searches/simulates candidate actions, picks a
-   bus-split at substation 5, applies it → rho 0.83, zero overloads.
+**Verified on the 118-bus env (crisis-at-open shape — the env begins inside
+the emergency, no injected outage needed):**
+
+1. Grid opens in crisis: line 177 (substations 115→67) at 130% loading.
+2. Do-nothing baseline: **blackout in 4 steps** (measured — protection trips
+   cascade). The countdown is real, not staged.
+3. Agent inspects state, scopes the search to the 5 substations around the
+   overload (88 candidate actions out of 72,107 total, ~3 s), simulates,
+   picks a bus-split at substation 67, applies it → max rho 0.80, stable
+   for 20+ further steps (verified with real env.step, not just simulate).
+
+*(Case14 fallback arc — healthy 0.92 → N-1 line loss → rho 1.91 → bus-split
+→ 0.83 — remains verified and runnable.)*
 4. Agent narrates each step: which limit is violated, what it tried, why the
    chosen action wins across the full operator menu — switching ≈ free,
    redispatch priced per MW, curtailment expensive + regulatory pain,
@@ -186,11 +195,13 @@ uncertainty, communication failures. Roadmap material.
   harmless vs dangerous; agent rescues the dangerous ones. (Fallback: same
   structure on case14, 20 outages.) Stretch: repeat at 2-3 load levels from
   the ENTSO-E curve.
-- **Snapshot selection matters:** the env's default first timestep is
-  already stressed (max rho 1.30 before any event; 184/186 outages read
-  "dangerous" against that baseline). The demo needs a healthy starting
-  snapshot (scan chronics) and a danger definition relative to baseline,
-  so the N-1 event — not the backdrop — is the crisis.
+- **Crisis-at-open (verified):** every chronic in this env starts stressed
+  (line 177 at rho ~1.30 across all 20 chronics; healthy snapshots do not
+  exist at t0, and do-nothing reaches game-over at step 4). The demo
+  embraces this: the env opens inside the emergency, and "do nothing =
+  blackout in 4 steps" is the measured baseline. Screening-table danger
+  definitions must be read relative to that stressed baseline (a naive
+  rho>1 cutoff marks 184/186 outages dangerous).
 - **Safe-state definition:** primary bar is rho < 1.0 on all lines (N-0
   secure). Stretch claim: verify the *rescued* state is itself N-1 secure
   (re-run screening on the fixed grid) — only claim if checked.
@@ -233,16 +244,17 @@ uncertainty, communication failures. Roadmap material.
 
 ## 12. Open items
 
-- **Re-spike the rescue arc on the 118-bus env** (the pivot's main risk):
-  ~~screening + search timing~~ DONE (6.1 s / 32 ms per solve / 72,107
-  actions / scoped ≈ 1 s). Remaining: find a healthy starting snapshot in
-  the chronics, pick a dangerous outage from it, and **verify a topology
-  rescue exists** (the arc's keystone — unproven on 118). Set a go/no-go
-  cutoff hour for falling back to case14.
+- ~~Re-spike the rescue arc on the 118-bus env~~ **DONE — GO.** Keystone
+  proven (`scenarios/arc_118.json`): env opens in crisis (line 177 at 1.30,
+  do-nothing blackout at step 4), scoped search 88/72,107 actions in 3 s,
+  bus-split at sub 67 → rho 0.80, stable 20+ steps after real apply. Note
+  the arc shape changed: crisis-at-open, no injected outage (all 20 chronics
+  start stressed; healthy snapshots don't exist in this env's design).
+- **Constraint-twist second-best on 118:** with substation 67 excluded, does
+  another scoped substation (64/68/80/115) still rescue? Same check as the
+  old case14 second-best item, now on the proven scenario.
 - Verify 118-bus render legibility (zoomed affected-area view readable on a
   projector).
-- Verify second-best action (constraint-twist beat) on whichever env the
-  demo ships.
 - Case14 fallback: the 20-outage screening + second-best check from the
   original plan still apply if the fallback triggers.
 - Verify arXiv:2512.20789 resolves (needs browser outside sandbox).
