@@ -45,10 +45,14 @@ def run_loop(
         )
         message = resp.choices[0].message
         messages.append(_assistant_to_dict(message))
+        text = (message.content or "").strip()
         if not message.tool_calls:
-            text = message.content or ""
             emit("narration", {"text": text})
             return text
+        # Narration may accompany tool calls; surface it so the reasoning
+        # behind each step still reaches the feed instead of being dropped.
+        if text:
+            emit("narration", {"text": text})
         for tool_call in message.tool_calls:
             try:
                 args = json.loads(tool_call.function.arguments or "{}")
