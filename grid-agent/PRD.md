@@ -50,17 +50,21 @@ the emergency, no injected outage needed):**
    picks a bus-split at substation 67, applies it → max rho 0.80, stable
    for 20+ further steps (verified with real env.step, not just simulate).
 
-*(Case14 fallback arc — healthy 0.92 → N-1 line loss → rho 1.91 → bus-split
-→ 0.83 — remains verified and runnable.)*
 4. Agent narrates each step: which limit is violated, what it tried, why the
    chosen action wins across the full operator menu — switching ≈ free,
    redispatch priced per MW, curtailment expensive + regulatory pain,
    transformer taps noted where relevant — and which rule requires acting
    (N-1 principle, thermal limits).
 5. Operator asks a follow-up ("why not redispatch?") — agent answers from its
-   own simulation results ("tried it; best redispatch left rho at 1.9").
-6. Constraint twist: "substation 5 unavailable, crew on site" → agent finds
-   the second-best action. (Shows judgment, not a lookup table.)
+   own simulation results, quoting the numbers it measured during the run
+   (case14 precedent: best redispatch left rho at 1.9; the 118-bus
+   equivalent comes out of the agent's own simulations).
+6. Constraint twist: "substation 67 unavailable, crew on site" → agent finds
+   the second-best action. (Shows judgment, not a lookup table. Second-best
+   existence on 118 is an open verification item, §13.)
+
+*(Historical: the case14 spike arc — healthy 0.92 → N-1 line loss → rho
+1.91 → bus-split → 0.83 — stays in the repo as reference, not a demo path.)*
 
 Visual: grid render goes red → green per step (plotly renders exist from
 spike).
@@ -71,7 +75,7 @@ spike).
 |---|---|
 | Rescue works | rho < 1.0 on demo scenario, live, end-to-end |
 | Narration quality | judge can follow why each action was chosen |
-| Honest benchmark | agent vs brute-force search vs do-nothing over N scenarios: success rate, actions taken, wallclock |
+| Honest benchmark | agent vs scoped brute-force vs do-nothing over N scenarios: success rate, actions taken, wallclock |
 | Physics grounding | zero LLM-invented numbers; all values from Grid2Op/pandapower |
 | Demo resilience | runs offline (local LLM), no API dependency, no network needed on stage |
 
@@ -79,14 +83,14 @@ spike).
 
 - **24h timebox.** Demoable end-to-end slice beats polish. No speculative
   abstractions.
-- **Environment: 118-bus primary, case14 fallback.** Live demo targets
+- **Environment: 118-bus, no fallback.** Live demo runs on
   `l2rpn_neurips_2020_track2_small` (118 buses — a real-sized grid, not a
-  toy; downloaded and local). The proven case14 arc stays runnable as the
-  safety net: if the 118-bus re-spike stalls past a set cutoff, the demo
-  ships on case14 and 118 becomes a benchmark slide. Decision reversed from
-  the spike (which picked case14 for legibility) on the grounds that 14
-  buses is too trivial for the hackathon; legibility is solved in the UI by
-  zooming to the affected area (§10).
+  toy; downloaded, local, keystone-proven §13). Decision reversed from the
+  spike (which picked case14 for legibility) on the grounds that 14 buses
+  is too trivial for the hackathon; legibility is solved in the UI by
+  zooming to the affected area (§10). **118 or bust** — team decision; the
+  case14 spike scripts remain in the repo as reference but are not a demo
+  path.
 - **LLM:** local model via OpenAI-compatible server —
   `mlx-community/gemma-4-26B-A4B-it-qat-4bit` at `http://localhost:8003/v1`.
   Verified: native tool calling, multi-turn tool round-trips, ~77 tok/s.
@@ -159,14 +163,16 @@ Messiness the agent handles and the optimizer cannot:
   switching operations vs most margin restored. The agent weighs and
   *explains* the trade-off; an optimizer needs hand-tuned weights and emits
   a number.
-- **Search pruning at scale — the headline number (measured).** The 118-bus
-  grid has 72,107 unitary topology actions; at 32 ms per power flow, blind
-  enumeration takes ~38 minutes. The operator has minutes. The agent reads
-  the grid state, scopes the search to the substations around the overload
-  (~35 actions, ~1 s), and the solver verifies only those. The solver alone
-  is infeasible in operator time; the agent makes it tractable. (On case14
-  this edge doesn't exist — 178 actions brute-force in seconds; it appears
-  exactly when the grid gets real-sized.)
+- **Search pruning at scale — the headline number (measured, proven on the
+  demo scenario).** The 118-bus grid has 72,107 unitary topology actions; at
+  32 ms per power flow, blind enumeration takes ~38 minutes. The operator
+  has minutes. The agent reads the grid state, scopes the search to the 5
+  substations around the overload (88 actions, 3 s), and the solver verifies
+  only those — that exact scoped search found the proven rescue
+  (`scenarios/arc_118.json`). The solver alone is infeasible in operator
+  time; the agent makes it tractable. (On case14 this edge doesn't exist —
+  178 actions brute-force in seconds; it appears exactly when the grid gets
+  real-sized.)
 - **Regulatory context.** Narration framed against the N-1 principle and the
   15-minute N-0 restoration window — the language a control room actually
   speaks.
@@ -192,9 +198,8 @@ uncertainty, communication failures. Roadmap material.
   (186 lines) at a fixed load snapshot — measured: full screening in 6.1 s.
   This directly serves challenge objective #2 — *screen the what-ifs, solve
   only the dangerous ones*: screening table classifies all 186 outages
-  harmless vs dangerous; agent rescues the dangerous ones. (Fallback: same
-  structure on case14, 20 outages.) Stretch: repeat at 2-3 load levels from
-  the ENTSO-E curve.
+  harmless vs dangerous; agent rescues the dangerous ones. Stretch: repeat
+  at 2-3 load levels from the ENTSO-E curve.
 - **Crisis-at-open (verified):** every chronic in this env starts stressed
   (line 177 at rho ~1.30 across all 20 chronics; healthy snapshots do not
   exist at t0, and do-nothing reaches game-over at step 4). The demo
@@ -231,10 +236,13 @@ uncertainty, communication failures. Roadmap material.
 
 1. **Working agent loop** (core): overloaded scenario → inspect → simulate →
    apply → safe, narrated. Reflection after apply (re-check rho, iterate).
-2. **Screening table** (challenge objective #2): all 20 single-line outages
-   classified safe/dangerous; agent rescues the dangerous ones.
-3. **Benchmark table:** agent vs brute-force vs do-nothing over the scenario
-   set — success rate, actions taken, wallclock.
+2. **Screening table** (challenge objective #2): all 186 single-line outages
+   on the 118-bus grid classified safe/dangerous relative to the stressed
+   baseline (§9); agent rescues the dangerous ones.
+3. **Benchmark table:** agent vs **scoped** brute-force vs do-nothing over
+   the scenario set — success rate, actions taken, wallclock. (Blind
+   brute-force at 38 min/scenario is quoted as a number, not run per
+   scenario.)
 4. **Demo UI:** local web page per §10 (grid render + narration feed +
    operator input).
 5. **Demo assets:** per-step grid renders (red → green), constraint-twist
@@ -242,7 +250,15 @@ uncertainty, communication failures. Roadmap material.
 6. **Pitch material:** positioning vs X-GridAgent, messiness thesis (§8),
    cost framing, regulation framing, roadmap slide.
 
-## 12. Open items
+## 12. Team split
+
+- **Engineer (Dimitar):** agent loop, tool layer, UI, benchmark + screening
+  runs — deliverables 1-4 of §11.
+- **Energy expert (teammate):** scenario vetting, cost constants, regulation
+  excerpt for the system prompt, narration quality review (does it sound
+  like an operator?), presenter crib sheet, pitch — deliverables 5-6 of §11.
+
+## 13. Open items
 
 - ~~Re-spike the rescue arc on the 118-bus env~~ **DONE — GO.** Keystone
   proven (`scenarios/arc_118.json`): env opens in crisis (line 177 at 1.30,
@@ -255,8 +271,6 @@ uncertainty, communication failures. Roadmap material.
   old case14 second-best item, now on the proven scenario.
 - Verify 118-bus render legibility (zoomed affected-area view readable on a
   projector).
-- Case14 fallback: the 20-outage screening + second-best check from the
-  original plan still apply if the fallback triggers.
 - Verify arXiv:2512.20789 resolves (needs browser outside sandbox).
 - If citing X-GridAgent's 100%-success figure, attribute it as *their* result
   on *analysis* tasks — never as ours.
