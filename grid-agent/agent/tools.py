@@ -82,9 +82,18 @@ class GridTools:
 
     def search_topology_actions(self, substations, exclude_substations=None):
         excluded = set(exclude_substations or [])
-        subs = [int(sub) for sub in substations if int(sub) not in excluded]
+        subs = []
+        skipped = []
+        for raw_sub in substations:
+            sub = int(raw_sub)
+            if sub in excluded:
+                continue
+            if sub < 0 or sub >= self.env.n_sub:
+                skipped.append({"sub": sub, "reason": "invalid substation id"})
+                continue
+            subs.append(sub)
         t0 = time.time()
-        results, skipped, n_tried = [], [], 0
+        results, n_tried = [], 0
         for sub_id in subs:
             acts = self.env.action_space.get_all_unitary_topologies_set(
                 self.env.action_space, sub_id=sub_id
@@ -194,6 +203,8 @@ class GridTools:
             result = getattr(self, name)(**arguments)
         except TypeError as exc:
             result = {"error": f"bad arguments for {name}: {exc}"}
+        except Exception as exc:
+            result = {"error": f"{name} failed: {type(exc).__name__}: {exc}"}
         out = json.dumps(result)
         if len(out) > config.MAX_TOOL_RESULT_CHARS:
             out = json.dumps({"truncated": True, "preview": out[:1400]})

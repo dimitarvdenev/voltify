@@ -46,6 +46,15 @@ def test_search_respects_exclusions(tools, arc):
     )
 
 
+def test_search_skips_invalid_substations(tools, arc):
+    res = tools.search_topology_actions([arc["rescue_substation"], 118, -1])
+    assert any(
+        skipped["reason"] == "invalid substation id"
+        for skipped in res["skipped_substations"]
+    )
+    assert res["candidates"][0]["substation"] == arc["rescue_substation"]
+
+
 def test_simulate_action_matches_search(tools, arc):
     res = tools.search_topology_actions(arc["scoped_subs"])
     best_id = res["candidates"][0]["action_id"]

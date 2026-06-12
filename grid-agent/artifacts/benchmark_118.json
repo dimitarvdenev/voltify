@@ -1,0 +1,100 @@
+{
+  "blind_brute_force": "72107 actions x ~32 ms = ~38 min (quoted, not run)",
+  "results": [
+    {
+      "scenario": "crisis-at-open",
+      "do_nothing": {
+        "rescued": false,
+        "survived_steps": 4,
+        "worst_rho": 1.309180498123169
+      },
+      "scoped_brute_force": {
+        "rescued": true,
+        "actions_taken": 1,
+        "actions_simulated": 88,
+        "wallclock_s": 3.4
+      },
+      "agent": {
+        "rescued": true,
+        "actions_taken": 1,
+        "wallclock_s": 15.0
+      }
+    },
+    {
+      "scenario": "outage-line-111",
+      "do_nothing": {
+        "rescued": false,
+        "survived_steps": 3,
+        "worst_rho": 1.780731201171875
+      },
+      "scoped_brute_force": {
+        "rescued": false,
+        "actions_taken": 1,
+        "actions_simulated": 155,
+        "wallclock_s": 5.6
+      },
+      "agent": {
+        "rescued": false,
+        "actions_taken": 0,
+        "wallclock_s": 33.6
+      }
+    },
+    {
+      "scenario": "outage-line-113",
+      "do_nothing": {
+        "rescued": false,
+        "survived_steps": 3,
+        "worst_rho": 1.6691337823867798
+      },
+      "scoped_brute_force": {
+        "rescued": false,
+        "actions_taken": 1,
+        "actions_simulated": 155,
+        "wallclock_s": 5.6
+      },
+      "agent": {
+        "rescued": false,
+        "actions_taken": 0,
+        "wallclock_s": 14.0
+      }
+    },
+    {
+      "scenario": "outage-line-101",
+      "do_nothing": {
+        "rescued": false,
+        "survived_steps": 3,
+        "worst_rho": 1.58785879611969
+      },
+      "scoped_brute_force": {
+        "rescued": false,
+        "actions_taken": 1,
+        "actions_simulated": 341,
+        "wallclock_s": 13.4
+      },
+      "agent": {
+        "rescued": false,
+        "actions_taken": 0,
+        "wallclock_s": 13.7
+      }
+    },
+    {
+      "scenario": "outage-line-183",
+      "do_nothing": {
+        "rescued": false,
+        "survived_steps": 3,
+        "worst_rho": 1.4322314262390137
+      },
+      "scoped_brute_force": {
+        "rescued": true,
+        "actions_taken": 1,
+        "actions_simulated": 88,
+        "wallclock_s": 3.4
+      },
+      "agent": {
+        "rescued": false,
+        "actions_taken": 0,
+        "wallclock_s": 8.3
+      }
+    }
+  ]
+}
