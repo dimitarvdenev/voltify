@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Voltify - Grid Operation Agent</title>
+<style>
+  :root { --red: #c0392b; --green: #27ae60; --bg: #11151c; --panel: #1a2029;
+          --text: #e8eaed; --muted: #8a93a2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; display: flex; height: 100vh; font: 15px/1.45 system-ui,
+         sans-serif; background: var(--bg); color: var(--text); }
+  #left { flex: 1.4; display: flex; flex-direction: column; padding: 12px; }
+  #right { flex: 1; display: flex; flex-direction: column;
+           border-left: 1px solid #2a3240; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 4px 8px; }
+  h1 { font-size: 18px; margin: 0; }
+  #status { font-weight: 700; padding: 2px 10px; border-radius: 12px; }
+  #status.overloaded { background: var(--red); }
+  #status.rescued { background: var(--green); }
+  #viewtoggle { margin-left: auto; color: var(--muted); cursor: pointer; }
+  iframe { flex: 1; border: 0; background: #fff; border-radius: 6px; }
+  #feed { flex: 1; overflow-y: auto; padding: 12px; }
+  .msg { margin: 8px 0; padding: 8px 12px; border-radius: 8px;
+         max-width: 92%; white-space: pre-wrap; }
+  .operator { background: #2b3a55; margin-left: auto; }
+  .narration { background: var(--panel); }
+  .tool { color: var(--muted); font-size: 12px; font-family: monospace;
+          padding: 2px 12px; }
+  form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid #2a3240; }
+  input { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid
+          #2a3240; background: var(--panel); color: var(--text); }
+  button { padding: 10px 18px; border: 0; border-radius: 6px;
+           background: #3b6ad6; color: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="left">
+  <header>
+    <h1>Voltify - Grid Operation Agent</h1>
+    <span id="status" class="overloaded">...</span>
+    <span id="maxrho"></span>
+    <span id="viewtoggle">full grid</span>
+  </header>
+  <iframe id="grid" src="about:blank"></iframe>
+</div>
+<div id="right">
+  <div id="feed"></div>
+  <form id="opform">
+    <input id="opmsg" placeholder="Operator message..." autocomplete="off">
+    <button>Send</button>
+  </form>
+</div>
+<script>
+let nSteps = 0, zoomed = true, renders = {full: null, zoom: null};
+
+function setRender() {
+  const src = zoomed ? renders.zoom : renders.full;
+  const frame = document.getElementById('grid');
+  if (src && frame.getAttribute('data-src') !== src) {
+    frame.src = '/' + src;
+    frame.setAttribute('data-src', src);
+  }
+}
+
+document.getElementById('viewtoggle').onclick = () => {
+  zoomed = !zoomed;
+  document.getElementById('viewtoggle').textContent =
+    zoomed ? 'full grid' : 'zoom to fault';
+  setRender();
+};
+
+async function poll() {
+  try {
+    const response = await fetch('/artifacts/run/steps.json?t=' + Date.now());
+    const steps = await response.json();
+    const feed = document.getElementById('feed');
+    for (const step of steps.slice(nSteps)) {
+      const div = document.createElement('div');
+      if (step.kind === 'tool') {
+        div.className = 'tool';
+        div.textContent = 'tool: ' + step.tool;
+      } else {
+        div.className = 'msg ' + step.kind;
+        div.textContent = step.text || '';
+      }
+      feed.appendChild(div);
+      if (step.render_full) renders.full = step.render_full;
+      if (step.render_zoom) renders.zoom = step.render_zoom;
+      if (step.grid_status) {
+        const el = document.getElementById('status');
+        el.textContent = step.grid_status;
+        el.className = step.grid_status;
+        document.getElementById('maxrho').textContent =
+          'max rho ' + (step.max_rho ?? '');
+      }
+    }
+    if (steps.length > nSteps) {
+      nSteps = steps.length;
+      feed.scrollTop = feed.scrollHeight;
+      setRender();
+    }
+  } catch (e) {
+    /* Agent not started yet. */
+  }
+}
+setInterval(poll, 1000);
+
+document.getElementById('opform').onsubmit = async (event) => {
+  event.preventDefault();
+  const box = document.getElementById('opmsg');
+  if (!box.value.trim()) return;
+  await fetch('/inbox', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text: box.value.trim()})
+  });
+  box.value = '';
+};
+</script>
+</body>
+</html>
