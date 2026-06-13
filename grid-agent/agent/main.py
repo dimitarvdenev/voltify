@@ -10,6 +10,7 @@ import os
 import time
 
 from agent import config
+from agent.advisors.blackboard import Blackboard
 from agent.artifacts import StepWriter
 from agent.llm import make_client, run_loop
 from agent.prompts import SCENARIO_BRIEF, SYSTEM_PROMPT
@@ -26,6 +27,7 @@ class Inbox:
         if not os.path.exists(self.path):
             with open(self.path, "w") as f:
                 json.dump([], f)
+        self.blackboard = Blackboard(run_dir)
 
     def next_message(self):
         while True:
@@ -35,8 +37,13 @@ class Inbox:
             except (json.JSONDecodeError, FileNotFoundError):
                 items = []
             if len(items) > self.consumed:
-                message = items[self.consumed]["text"]
+                item = items[self.consumed]
                 self.consumed += 1
+                if item.get("kind") == "decision":
+                    self.blackboard.append("decisions", item)
+                    message = "Operator decision: " + json.dumps(item, separators=(",", ":"))
+                else:
+                    message = item.get("text", "")
                 return message
             time.sleep(0.5)
 
@@ -78,6 +85,7 @@ def main():
     def on_event(kind, payload):
         entry = {
             "kind": kind,
+            "agent": "ops",
             "grid_status": grid_status(),
             "max_rho": round(float(tools.obs.rho.max()), 3),
         }
@@ -85,6 +93,10 @@ def main():
             entry["tool"] = payload["tool"]
             entry["arguments"] = payload["arguments"]
             entry["summary"] = payload["result"][:200]
+            if payload["tool"] == "screen_post_action":
+                entry["agent"] = "screening"
+                entry["kind"] = "verdict"
+                entry["text"] = _screening_feed_text(payload["result"])
             if payload["tool"] == "apply_action":
                 tag = f"step_{len(writer.steps)}_applied"
                 entry["render_full"], entry["render_zoom"] = emit_render(tag)
@@ -121,6 +133,27 @@ def main():
             on_event=on_event,
         )
         print(f"\nagent> {final}\n")
+
+
+def _screening_feed_text(result_json):
+    try:
+        result = json.loads(result_json)
+    except json.JSONDecodeError:
+        return result_json
+    if "error" in result:
+        return "Screening error: " + result["error"]
+    verdict = "N-1 secure" if result.get("n1_secure") else "N-1 fragile"
+    worst = result.get("worst_next_contingency") or {}
+    line = worst.get("line_label") or f"line {worst.get('line_id')}"
+    if worst.get("diverged"):
+        consequence = "diverges"
+    else:
+        consequence = f"reaches max rho {worst.get('post_trip_rho')}"
+    return (
+        f"{verdict}: screened {result.get('screened_outages')} post-action "
+        f"outages for {result.get('action_id')}. Worst next contingency is "
+        f"{line}: {consequence}. {result.get('baseline_comparison')}"
+    )
 
 
 if __name__ == "__main__":

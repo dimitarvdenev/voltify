@@ -8,6 +8,8 @@ import grid2op
 import numpy as np
 
 from agent import config
+from agent.advisors.blackboard import Blackboard
+from agent.advisors.screening import screen_post_action_env
 from agent.labels import line_label, substation_label
 
 
@@ -26,6 +28,7 @@ class GridTools:
         self.registry = {}
         self.meta = {}
         self.done = False
+        self.blackboard = Blackboard(config.RUN_DIR)
 
     def _degree(self):
         degree = [0 for _ in range(self.env.n_sub)]
@@ -89,6 +92,7 @@ class GridTools:
         rho = self.obs.rho
         overloaded = np.where(rho > 1.0)[0]
         top = np.argsort(-rho)[: config.TOP_K_LOADED_LINES]
+        board = self.blackboard.read()
         return {
             "max_rho": round(float(rho.max()), 3),
             "n_overloaded": int(len(overloaded)),
@@ -98,6 +102,7 @@ class GridTools:
                 int(line) for line in np.where(~self.obs.line_status)[0]
             ],
             "candidate_scope_subs": self._scoped_subs(n_hops=1),
+            "blackboard": _compact_blackboard(board),
         }
 
     def _action_effects(self, act, sim_obs):
@@ -219,6 +224,25 @@ class GridTools:
             "worst_rho_during_check": round(worst_seen, 3),
         }
 
+    def screen_post_action(self, action_id):
+        act = self.registry.get(action_id)
+        if act is None:
+            return {
+                "error": f"unknown action_id {action_id!r}; "
+                "run search_topology_actions first"
+            }
+        result = screen_post_action_env(self.env, self.obs, act)
+        result["action_id"] = action_id
+        if action_id in self.meta:
+            meta = self.meta[action_id]
+            result["candidate"] = {
+                "substation": meta["substation"],
+                "description": meta["description"],
+                "simulated_max_rho": meta["simulated_max_rho"],
+            }
+        self.blackboard.append("screening_verdicts", _screening_blackboard_item(result))
+        return result
+
     def _stability_check(self):
         sim_env = self.env.copy()
         do_nothing = sim_env.action_space({})
@@ -236,6 +260,7 @@ class GridTools:
             "get_grid_state",
             "search_topology_actions",
             "simulate_action",
+            "screen_post_action",
             "apply_action",
         ):
             return json.dumps({"error": f"unknown tool {name!r}"})
@@ -249,6 +274,45 @@ class GridTools:
         if len(out) > config.MAX_TOOL_RESULT_CHARS:
             out = json.dumps({"truncated": True, "preview": out[:1400]}, separators=(",", ":"))
         return out
+
+
+def _screening_blackboard_item(result):
+    worst = result.get("worst_next_contingency") or {}
+    return {
+        "from": "screening",
+        "kind": "post_action_n1",
+        "action_id": result.get("action_id"),
+        "n1_secure": result.get("n1_secure"),
+        "post_action_rho": result.get("post_action_rho"),
+        "worst_next_contingency": {
+            "line_id": worst.get("line_id"),
+            "post_trip_rho": worst.get("post_trip_rho"),
+            "diverged": worst.get("diverged"),
+        },
+        "screened_outages": result.get("screened_outages"),
+        "insecure_outages": result.get("insecure_outages"),
+        "reason": result.get("baseline_comparison"),
+    }
+
+
+def _compact_blackboard(board):
+    latest_screening = None
+    if board["screening_verdicts"]:
+        latest = board["screening_verdicts"][-1]
+        latest_screening = {
+            "action_id": latest.get("action_id"),
+            "n1_secure": latest.get("n1_secure"),
+            "post_action_rho": latest.get("post_action_rho"),
+            "worst_next_contingency": latest.get("worst_next_contingency"),
+            "insecure_outages": latest.get("insecure_outages"),
+        }
+    return {
+        "constraints": board["constraints"],
+        "vetoes": board["vetoes"],
+        "latest_screening_verdict": latest_screening,
+        "availability": board["availability"],
+        "clock": board["clock"],
+    }
 
 
 TOOLS_SCHEMA = [
@@ -304,6 +368,23 @@ TOOLS_SCHEMA = [
             "description": (
                 "Simulate one candidate from a previous search against the "
                 "current state. Solver results only."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"action_id": {"type": "string"}},
+                "required": ["action_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "screen_post_action",
+            "description": (
+                "Ask the Screening advisor to run N-1 screening on the "
+                "POST-action topology for a candidate action. Use after "
+                "simulate_action and before apply_action. Returns whether "
+                "the fix is N-1 secure and the worst next contingency."
             ),
             "parameters": {
                 "type": "object",

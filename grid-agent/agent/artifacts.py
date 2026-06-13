@@ -3,16 +3,21 @@
 import json
 import os
 
+from agent.advisors.blackboard import Blackboard
+
 
 class StepWriter:
     def __init__(self, run_dir):
         os.makedirs(run_dir, exist_ok=True)
         self.path = os.path.join(run_dir, "steps.json")
+        self.blackboard = Blackboard(run_dir)
+        self.blackboard.reset()
         self.steps = []
         self._flush()
 
     def add(self, **step):
         step["step"] = len(self.steps) + 1
+        step.setdefault("agent", _agent_for_step(step))
         self.steps.append(step)
         self._flush()
 
@@ -21,3 +26,11 @@ class StepWriter:
         with open(tmp, "w") as f:
             json.dump(self.steps, f, indent=2)
         os.replace(tmp, self.path)
+
+
+def _agent_for_step(step):
+    if "agent" in step:
+        return step["agent"]
+    if step.get("kind") == "operator":
+        return "operator"
+    return "ops"

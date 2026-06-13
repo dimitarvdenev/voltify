@@ -23,6 +23,7 @@
     --red:       #ff5a4d;
     --green:     #36d99a;
     --blue:      #4f8bff;
+    --violet:    #b58cff;
     --glow-red:  rgba(255,90,77,.45);
     --glow-grn:  rgba(54,217,154,.40);
   }
@@ -258,6 +259,22 @@
     font-family: "IBM Plex Mono", monospace; font-size: 9px;
     letter-spacing: .2em; color: var(--cyan);
   }
+  .narration.ops::before { content: "◆ OPS"; }
+  .narration.screening,
+  .verdict.screening {
+    align-self: flex-start;
+    background: linear-gradient(180deg, rgba(181,140,255,.12), rgba(181,140,255,.04));
+    border: 1px solid rgba(181,140,255,.28);
+    border-left: 2px solid var(--violet);
+    border-radius: 3px 9px 9px 9px;
+    padding: 10px 14px; color: #eadfff; white-space: pre-wrap;
+  }
+  .narration.screening::before,
+  .verdict.screening::before {
+    content: "◆ SCREENING"; display: block; margin-bottom: 5px;
+    font-family: "IBM Plex Mono", monospace; font-size: 9px;
+    letter-spacing: .2em; color: var(--violet);
+  }
 
   /* tool telemetry */
   .tool {
@@ -380,10 +397,10 @@ async function poll() {
     for (const step of steps.slice(nSteps)) {
       const div = document.createElement('div');
       if (step.kind === 'tool') {
-        div.className = 'tool';
+        div.className = 'tool ' + (step.agent || 'ops');
         div.textContent = step.tool;
       } else {
-        div.className = 'msg ' + step.kind;
+        div.className = 'msg ' + step.kind + ' ' + (step.agent || 'ops');
         div.textContent = step.text || '';
       }
       feed.appendChild(div);
@@ -412,10 +429,19 @@ document.getElementById('opform').onsubmit = async (event) => {
   event.preventDefault();
   const box = document.getElementById('opmsg');
   if (!box.value.trim()) return;
+  let payload = {text: box.value.trim()};
+  if (box.value.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(box.value.trim());
+      if (parsed.kind === 'decision') payload = parsed;
+    } catch (e) {
+      payload = {text: box.value.trim()};
+    }
+  }
   await fetch('/inbox', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({text: box.value.trim()})
+    body: JSON.stringify(payload)
   });
   box.value = '';
 };

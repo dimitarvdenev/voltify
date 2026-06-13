@@ -92,6 +92,7 @@ def test_schema_names_match_methods(tools):
         "get_grid_state",
         "search_topology_actions",
         "simulate_action",
+        "screen_post_action",
         "apply_action",
     ]
     for name in names:
@@ -108,3 +109,20 @@ def test_dispatch_returns_compact_json(tools):
 def test_dispatch_unknown_tool(tools):
     out = json.loads(tools.dispatch("explode_grid", {}))
     assert "error" in out
+
+
+def test_screen_post_action_reports_n1_verdict(arc):
+    from agent.tools import GridTools
+
+    fresh = GridTools()
+    res = fresh.search_topology_actions(arc["scoped_subs"])
+    best_id = res["candidates"][0]["action_id"]
+    verdict = fresh.screen_post_action(best_id)
+
+    assert verdict["action_id"] == best_id
+    assert verdict["post_action_rho"] < 1.0
+    assert verdict["screened_outages"] > 100
+    assert isinstance(verdict["n1_secure"], bool)
+    assert "worst_next_contingency" in verdict
+    board = fresh.blackboard.read()
+    assert board["screening_verdicts"][-1]["action_id"] == best_id

@@ -36,7 +36,10 @@ class Handler(SimpleHTTPRequestHandler):
                 items = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             items = []
-        items.append({"text": body["text"]})
+        if body.get("kind") == "decision":
+            items.append(body)
+        else:
+            items.append({"text": body["text"]})
         with open(INBOX, "w") as f:
             json.dump(items, f)
         self.send_response(204)
