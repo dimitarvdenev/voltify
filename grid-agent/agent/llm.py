@@ -1,8 +1,23 @@
 """Plain OpenAI chat-completions tool loop."""
 
 import json
+import re
 
 from agent import config
+
+
+PROMISED_TOOL_PATTERNS = (
+    r"\bi\s+will\s+(now\s+)?search\b",
+    r"\bi'll\s+(now\s+)?search\b",
+    r"\bi\s+will\s+(now\s+)?simulate\b",
+    r"\bi'll\s+(now\s+)?simulate\b",
+    r"\bi\s+will\s+(now\s+)?apply\b",
+    r"\bi'll\s+(now\s+)?apply\b",
+    r"\bi\s+will\s+(now\s+)?re-?check\b",
+    r"\bi'll\s+(now\s+)?re-?check\b",
+    r"\bi\s+will\s+(now\s+)?check\b",
+    r"\bi'll\s+(now\s+)?check\b",
+)
 
 
 def make_client():
@@ -48,6 +63,18 @@ def run_loop(
         text = (message.content or "").strip()
         if not message.tool_calls:
             emit("narration", {"text": text})
+            if _promises_tool_without_call(text):
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "You ended with a promised tool action but did not "
+                            "issue the tool call. Continue now by issuing the "
+                            "promised tool call. Do not stop at narration."
+                        ),
+                    }
+                )
+                continue
             return text
         # Narration may accompany tool calls; surface it so the reasoning
         # behind each step still reaches the feed instead of being dropped.
@@ -80,3 +107,8 @@ def run_loop(
     )
     emit("narration", {"text": text})
     return text
+
+
+def _promises_tool_without_call(text):
+    lowered = text.lower()
+    return any(re.search(pattern, lowered) for pattern in PROMISED_TOOL_PATTERNS)

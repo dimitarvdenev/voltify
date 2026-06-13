@@ -317,7 +317,7 @@
       <div class="track"><div class="fill" id="rhofill"></div></div>
       <span class="val" id="maxrho">—</span>
     </div>
-    <span id="viewtoggle">full grid</span>
+    <span id="viewtoggle">full map</span>
   </header>
   <div id="gridwrap">
     <span class="bracket tl"></span><span class="bracket tr"></span>
@@ -340,7 +340,7 @@
   </form>
 </div>
 <script>
-let nSteps = 0, zoomed = true, renders = {full: null, zoom: null};
+let nSteps = 0, zoomed = false, renders = {full: null, zoom: null};
 
 function setRender() {
   const src = zoomed ? renders.zoom : renders.full;
@@ -368,7 +368,7 @@ function setRho(rho) {
 document.getElementById('viewtoggle').onclick = () => {
   zoomed = !zoomed;
   document.getElementById('viewtoggle').textContent =
-    zoomed ? 'full grid' : 'zoom to fault';
+    zoomed ? 'full map' : 'zoom to fault';
   setRender();
 };
 

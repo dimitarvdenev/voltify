@@ -8,6 +8,7 @@ import grid2op
 import numpy as np
 
 from agent import config
+from agent.labels import line_label, substation_label
 
 
 class GridTools:
@@ -26,13 +27,44 @@ class GridTools:
         self.meta = {}
         self.done = False
 
-    def _line_summary(self, line_id):
+    def _degree(self):
+        degree = [0 for _ in range(self.env.n_sub)]
+        for line_id in range(self.env.n_line):
+            degree[int(self.obs.line_or_to_subid[line_id])] += 1
+            degree[int(self.obs.line_ex_to_subid[line_id])] += 1
+        return degree
+
+    def _incident_rho(self, obs=None):
+        obs = obs or self.obs
+        incident = [0.0 for _ in range(self.env.n_sub)]
+        for line_id, rho in enumerate(obs.rho):
+            a = int(obs.line_or_to_subid[line_id])
+            b = int(obs.line_ex_to_subid[line_id])
+            incident[a] = max(incident[a], float(rho))
+            incident[b] = max(incident[b], float(rho))
+        return incident
+
+    def _substation_label(self, sub_id, obs=None):
+        degree = self._degree()
+        incident = self._incident_rho(obs)
+        return substation_label(int(sub_id), degree[int(sub_id)], incident[int(sub_id)])
+
+    def _line_summary(self, line_id, obs=None):
+        obs = obs or self.obs
+        from_sub = int(obs.line_or_to_subid[line_id])
+        to_sub = int(obs.line_ex_to_subid[line_id])
+        from_label = self._substation_label(from_sub, obs)
+        to_label = self._substation_label(to_sub, obs)
         return {
             "line_id": int(line_id),
-            "from_sub": int(self.obs.line_or_to_subid[line_id]),
-            "to_sub": int(self.obs.line_ex_to_subid[line_id]),
-            "rho": round(float(self.obs.rho[line_id]), 3),
+            "line_label": line_label(line_id, from_label, to_label),
+            "from_sub": from_sub,
+            "to_sub": to_sub,
+            "rho": round(float(obs.rho[line_id]), 3),
         }
+
+    def _substation_summary(self, sub_id, obs=None):
+        return {"sub": int(sub_id), "label": self._substation_label(sub_id, obs)}
 
     def _scoped_subs(self, n_hops=1):
         """Substations at overloaded-line endpoints, grown by n hops."""
@@ -89,7 +121,7 @@ class GridTools:
             if sub in excluded:
                 continue
             if sub < 0 or sub >= self.env.n_sub:
-                skipped.append({"sub": sub, "reason": "invalid substation id"})
+                skipped.append({"sub": sub, "label": f"Unknown UW {sub}", "reason": "invalid substation id"})
                 continue
             subs.append(sub)
         t0 = time.time()
@@ -100,7 +132,11 @@ class GridTools:
             )
             if len(acts) > config.MAX_ACTIONS_PER_SUB:
                 skipped.append(
-                    {"sub": sub_id, "reason": f"{len(acts)} combos, over cap"}
+                    {
+                        "sub": sub_id,
+                        "label": self._substation_label(sub_id),
+                        "reason": f"{len(acts)} combos, over cap",
+                    }
                 )
                 continue
             for i, act in enumerate(acts):
@@ -114,7 +150,8 @@ class GridTools:
                 self.meta[action_id] = {
                     "action_id": action_id,
                     "substation": sub_id,
-                    "description": f"bus-split at substation {sub_id}",
+                    "substation_label": self._substation_label(sub_id),
+                    "description": f"bus-split at {self._substation_label(sub_id)}",
                     "simulated_max_rho": round(float(sim_obs.rho.max()), 3),
                     "simulated_n_overloaded": int((sim_obs.rho > 1.0).sum()),
                     "reconnects_lines": reconnects,
@@ -152,6 +189,9 @@ class GridTools:
             "simulated_max_rho": round(float(sim_obs.rho.max()), 3),
             "simulated_n_overloaded": int(len(over)),
             "overloaded_lines": [int(line) for line in over],
+            "overloaded_line_details": [
+                self._line_summary(line, sim_obs) for line in over
+            ],
             "reconnects_lines": reconnects,
         }
 
@@ -205,9 +245,9 @@ class GridTools:
             result = {"error": f"bad arguments for {name}: {exc}"}
         except Exception as exc:
             result = {"error": f"{name} failed: {type(exc).__name__}: {exc}"}
-        out = json.dumps(result)
+        out = json.dumps(result, separators=(",", ":"))
         if len(out) > config.MAX_TOOL_RESULT_CHARS:
-            out = json.dumps({"truncated": True, "preview": out[:1400]})
+            out = json.dumps({"truncated": True, "preview": out[:1400]}, separators=(",", ":"))
         return out
 
 

@@ -61,7 +61,8 @@ Autonomy and tool-use protocol (important):
 
 Narration style:
 - Speak like an operator: name the violated limit, the affected line
-  (ids and substations), and the rule that requires acting.
+  using line_label/from_label/to_label when the tool provides them. Keep raw
+  ids only as secondary references when needed for precision.
 - Justify the chosen action against the full menu - switching,
   transformer taps, redispatch, curtailment - using the cost guidance
   below. State why the cheaper-or-better options you rejected lose.

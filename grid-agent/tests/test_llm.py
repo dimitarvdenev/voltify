@@ -1,7 +1,7 @@
 import json
 from types import SimpleNamespace as NS
 
-from agent.llm import run_loop
+from agent.llm import _promises_tool_without_call, run_loop
 
 
 def fake_response(content=None, tool_calls=None):
@@ -45,6 +45,12 @@ def test_loop_executes_tools_then_returns_narration():
             tool_calls=[fake_tool_call("c1", "get_grid_state", {})]
         ),
         fake_response(content="Line 177 is overloaded; I will search."),
+        fake_response(
+            tool_calls=[
+                fake_tool_call("c2", "search_topology_actions", {"substations": [67]})
+            ]
+        ),
+        fake_response(content="Found a switching candidate."),
     ]
     client, state = make_fake_client(script)
     calls = []
@@ -63,14 +69,17 @@ def test_loop_executes_tools_then_returns_narration():
         on_event=lambda kind, payload: events.append(kind),
     )
 
-    assert final == "Line 177 is overloaded; I will search."
-    assert calls == [("get_grid_state", {})]
+    assert final == "Found a switching candidate."
+    assert calls == [
+        ("get_grid_state", {}),
+        ("search_topology_actions", {"substations": [67]}),
+    ]
     roles = [
         message["role"] if isinstance(message, dict) else "assistant"
         for message in state["seen_messages"]
     ]
     assert "tool" in roles
-    assert events == ["tool", "narration"]
+    assert events == ["tool", "narration", "tool", "narration"]
 
 
 def test_loop_stops_at_max_iterations():
@@ -87,3 +96,9 @@ def test_loop_stops_at_max_iterations():
         max_iterations=3,
     )
     assert "iteration limit" in final
+
+
+def test_promised_tool_detector_handles_now_variant():
+    assert _promises_tool_without_call(
+        "I will now search for topology switching actions to alleviate this overload."
+    )
