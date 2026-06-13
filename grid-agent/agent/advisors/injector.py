@@ -184,9 +184,32 @@ class EventInjector:
         return min(survivable, key=lambda pair: pair[1])[0]
 
     def _event_load_drift(self):
-        before = self._max_rho()
-        act = self.tools.env.action_space({})
-        done, _ = self.tools.step_external(act)
+        # Advancing the timeseries one interval can itself diverge the solver
+        # on this stressed grid. Forecast the do-nothing step first; if it
+        # would collapse, DON'T commit it - warn the operator and hold the
+        # clock so the run stays alive and recoverable.
+        do_nothing = self.tools.env.action_space({})
+        with self.tools.lock:
+            obs = self.tools.obs
+            before = round(float(obs.rho.max()), 3)
+            try:
+                sim_obs, _, sim_done, _ = obs.simulate(do_nothing)
+            except Exception:
+                sim_obs, sim_done = None, True
+        if sim_done or sim_obs is None:
+            facts = {
+                "event": "load_surge_warning",
+                "max_rho_now": before,
+                "n_overloaded_now": self._n_overloaded(),
+            }
+            fallback = (
+                f"Demand still climbing - the next interval would push the "
+                f"grid past the solver limit. Worst loading already {before} "
+                f"({facts['n_overloaded_now']} over limit). Act before it tips."
+            )
+            return self._emit(facts, fallback, render=False, agent="grid")
+
+        done, _ = self.tools.step_external(do_nothing)
         after = self._max_rho()
         direction = "rising" if after >= before else "easing"
         facts = {
