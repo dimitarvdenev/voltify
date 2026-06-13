@@ -10,7 +10,7 @@
 
 **Working directory for ALL commands:** `grid-agent/` (repo root is one level up). All tests run as `.venv/bin/python -m pytest tests/ -v` from `grid-agent/` so the `agent` package is importable from cwd.
 
-**Environment quirks (from HANDOFF.md):** install with `UV_CACHE_DIR=$TMPDIR/uv-cache uv pip install --python .venv/bin/python -r requirements.txt`; matplotlib wants `MPLCONFIGDIR=$TMPDIR/mpl`. Keep `numpy<2`.
+**Environment quirks:** install with `UV_CACHE_DIR=$TMPDIR/uv-cache uv pip install --python .venv/bin/python -r requirements.txt`; matplotlib wants `MPLCONFIGDIR=$TMPDIR/mpl`. Keep `numpy<2`.
 
 **Ground truth:** every solver-dependent assertion uses `scenarios/arc_118.json` (chronic 0 opens in crisis: line 177 at rho 1.30; scoped search over subs [64, 67, 68, 80, 115] finds bus-split at sub 67 → rho 0.796 simulated / 0.806 applied; 20+ stable steps). Use tolerances (`abs=0.05`), not exact floats — solver/version drift must not break tests.
 

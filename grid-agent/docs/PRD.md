@@ -2,7 +2,7 @@
 
 Consolidated from the official E.ON challenge text (**Direction 1: Grid
 Operation Agents** — note: `../CHALLENGES.md` is an earlier draft with
-different numbering), `docs/HANDOFF.md`, `docs/PRIOR_ART.md`, `README.md`, and the
+different numbering), `docs/PRIOR_ART.md`, `README.md`, and the
 local-LLM grounding session. This is the **what/why**; the technical spec
 (tool schemas, loop design, file layout) is a separate document.
 
