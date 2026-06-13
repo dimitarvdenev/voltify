@@ -11,12 +11,27 @@ class StepWriter:
     def __init__(self, run_dir):
         os.makedirs(run_dir, exist_ok=True)
         self.path = os.path.join(run_dir, "steps.json")
+        self.busy_path = os.path.join(run_dir, "busy.json")
         self.blackboard = Blackboard(run_dir)
         self.blackboard.reset()
         self.steps = []
         # The operator loop and the EventInjector thread both append steps.
         self._lock = threading.Lock()
         self._flush()
+        self.clear_busy()
+
+    def set_busy(self, label="Agent thinking…"):
+        """Signal the UI that an agent is mid-reasoning (drives the ticker)."""
+        self._write_busy(True, label)
+
+    def clear_busy(self):
+        self._write_busy(False, "")
+
+    def _write_busy(self, busy, label):
+        tmp = self.busy_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"busy": busy, "label": label}, f)
+        os.replace(tmp, self.busy_path)
 
     def add(self, **step):
         with self._lock:

@@ -180,14 +180,18 @@ def main():
             else:
                 messages[-1]["content"] += "\n\nOperator: " + operator_msg
             writer.add(kind="operator", text=operator_msg)
-            final = run_loop(
-                client,
-                config.LLM_MODEL,
-                messages,
-                TOOLS_SCHEMA,
-                tools.dispatch,
-                on_event=on_event,
-            )
+            writer.set_busy("Operations agent reasoning…")
+            try:
+                final = run_loop(
+                    client,
+                    config.LLM_MODEL,
+                    messages,
+                    TOOLS_SCHEMA,
+                    tools.dispatch,
+                    on_event=on_event,
+                )
+            finally:
+                writer.clear_busy()
             print(f"\nagent> {final}\n")
     finally:
         if injector:

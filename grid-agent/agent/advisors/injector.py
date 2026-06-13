@@ -96,6 +96,7 @@ class EventInjector:
                 break
             if self.tools.done:
                 break
+            self.writer.set_busy("Grid events desk on the wire…")
             try:
                 self.fire_once()
             except Exception as exc:  # never let the thread kill the demo
@@ -107,6 +108,8 @@ class EventInjector:
                     agent="grid",
                     text=f"(event injector skipped: {type(exc).__name__})",
                 )
+            finally:
+                self.writer.clear_busy()
 
     # ---- one event -------------------------------------------------------
 
@@ -133,9 +136,10 @@ class EventInjector:
         if line_id is None:
             # Every outage diverges (grid too fragile) - don't blackout; drift.
             return self._event_load_drift()
-        summary = self.tools._line_summary(line_id)
-        act = self.tools.env.action_space({"set_line_status": [(line_id, -1)]})
-        done, _ = self.tools.step_external(act)
+        with self.tools.lock:
+            summary = self.tools._line_summary(line_id)
+            act = self.tools.env.action_space({"set_line_status": [(line_id, -1)]})
+            done, _ = self.tools.step_external(act)
         facts = {
             "event": "forced_line_outage",
             "line_id": line_id,
@@ -188,8 +192,8 @@ class EventInjector:
         # on this stressed grid. Forecast the do-nothing step first; if it
         # would collapse, DON'T commit it - warn the operator and hold the
         # clock so the run stays alive and recoverable.
-        do_nothing = self.tools.env.action_space({})
         with self.tools.lock:
+            do_nothing = self.tools.env.action_space({})
             obs = self.tools.obs
             before = round(float(obs.rho.max()), 3)
             try:
@@ -226,9 +230,10 @@ class EventInjector:
         return self._emit(facts, fallback, render=True, game_over=done)
 
     def _event_weather_shift(self):
-        rho = self.tools.obs.rho
-        line_id = int(np.argsort(-rho)[self.rng.randint(0, 2)])
-        summary = self.tools._line_summary(line_id)
+        with self.tools.lock:
+            rho = self.tools.obs.rho
+            line_id = int(np.argsort(-rho)[self.rng.randint(0, 2)])
+            summary = self.tools._line_summary(line_id)
         pct = round(self.rng.uniform(4.0, 12.0), 1)
         item = {
             "from": "weather",

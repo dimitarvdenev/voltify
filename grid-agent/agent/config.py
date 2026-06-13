@@ -21,6 +21,6 @@ RUN_DIR = os.path.join(ROOT, "artifacts", "run")
 RENDER_DIR = os.path.join(RUN_DIR, "renders")
 
 # Random event injector: autonomous grid dynamics between operator turns.
-INJECTOR_PERIOD_SEC = 30.0
+INJECTOR_PERIOD_SEC = 75.0
 INJECTOR_JITTER_SEC = 12.0
 INJECTOR_SEED = None
