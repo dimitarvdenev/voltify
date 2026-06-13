@@ -250,7 +250,7 @@ scenarios/    Scripted demo scenario data (assets, weather, arc, second-best)
 scripts/      One-off spike and verification scripts
 tests/        Pytest suite (mirrors agent modules)
 ui/           Static demo UI and local server
-artifacts/    Checked-in demo outputs, screenshots, video; run/ is regenerated
+artifacts/    Demo video + benchmark/screening outputs; run/ is regenerated
 ```
 
 **Data / artifact formats:**
@@ -361,9 +361,11 @@ Persistence is plain JSON files written atomically (write to `*.tmp`, then
 
 ### Checked-in demo artifacts
 
-`artifacts/` holds non-`run/` outputs that are committed for the pitch:
-the screenshots (`0X_*.png`), stage HTML renders, benchmark/screening
-artifacts, and the demo video `artifacts/voltify.mp4`.
+`artifacts/` holds non-`run/` outputs committed for the pitch: the cut demo
+video **`artifacts/voltify.mp4`** (the authoritative visual record of the live
+demo) and the benchmark/screening artifacts (`benchmark_118.{json,md}`,
+`screening_118.{json,md}`). The live UI renders (per-state Leaflet blueprints)
+are generated at runtime into `artifacts/run/renders/` and are not committed.
 
 ### Data provenance
 
