@@ -4,7 +4,7 @@ Story: instead of a synthetic/random snapshot, the demo grid's load level
 reflects an actual moment from Germany's grid (ENTSO-E load curve), so the
 "is the grid stressed right now" framing is grounded in real data.
 
-Run: .venv/bin/python spike_real_load_network.py
+Run: .venv/bin/python scripts/spike_real_load_network.py
 """
 
 import re

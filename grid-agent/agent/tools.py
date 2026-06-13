@@ -402,10 +402,9 @@ class GridTools:
 
     def _operator_override(self, action_id):
         for decision in self.blackboard.read().get("decisions", []):
-            if decision.get("choice") == "override_veto" and decision.get("ref") in (
-                action_id,
-                None,
-                "",
+            if (
+                decision.get("choice") == "override_veto"
+                and decision.get("ref") == action_id
             ):
                 return True
         return False
@@ -621,31 +620,33 @@ def _compact_blackboard(board):
             "worst_next_contingency": latest.get("worst_next_contingency"),
             "insecure_outages": latest.get("insecure_outages"),
         }
+    latest_constraint = None
+    if board["constraints"]:
+        item = board["constraints"][-1]
+        latest_constraint = {
+            "from": item.get("from"),
+            "kind": item.get("kind"),
+            "line_id": item.get("line_id"),
+            "sub": item.get("sub"),
+            "pct": item.get("pct"),
+        }
+    latest_veto = None
+    if board["vetoes"]:
+        item = board["vetoes"][-1]
+        latest_veto = {
+            "from": item.get("from"),
+            "action_id": item.get("action_id"),
+            "level": item.get("level"),
+            "override": item.get("override"),
+            "substation": item.get("substation"),
+        }
     return {
-        "constraints": [
-            {
-                "from": item.get("from"),
-                "kind": item.get("kind"),
-                "line_id": item.get("line_id"),
-                "sub": item.get("sub"),
-                "pct": item.get("pct"),
-                "reason": (item.get("reason") or "")[:120],
-            }
-            for item in board["constraints"][-5:]
-        ],
-        "vetoes": [
-            {
-                "from": item.get("from"),
-                "action_id": item.get("action_id"),
-                "level": item.get("level"),
-                "override": item.get("override"),
-                "substation": item.get("substation"),
-                "reason": (item.get("reason") or "")[:120],
-            }
-            for item in board["vetoes"][-3:]
-        ],
+        "constraint_count": len(board["constraints"]),
+        "latest_constraint": latest_constraint,
+        "veto_count": len(board["vetoes"]),
+        "latest_veto": latest_veto,
         "latest_screening_verdict": latest_screening,
-        "availability": board["availability"],
+        "availability_count": len(board["availability"]),
         "clock": board["clock"],
     }
 

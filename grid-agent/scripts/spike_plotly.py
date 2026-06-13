@@ -1,9 +1,9 @@
 """Render the three rescue-arc stages as interactive plotly HTML fragments.
 
 Each stage becomes artifacts/stage_N.html (hover lines for loading %, zoom/pan).
-workflow.html embeds them via <iframe>.
+artifacts/workflow.html embeds them via <iframe>.
 
-Run: .venv/bin/python spike_plotly.py
+Run: .venv/bin/python scripts/spike_plotly.py
 """
 
 import grid2op

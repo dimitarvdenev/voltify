@@ -75,6 +75,7 @@ def test_apply_action_rescues_grid(arc):
     from agent.tools import GridTools
 
     fresh = GridTools()
+    fresh.blackboard.reset()
     res = fresh.search_topology_actions(arc["scoped_subs"])
     best_id = res["candidates"][0]["action_id"]
 
@@ -104,6 +105,8 @@ def test_schema_names_match_methods(tools):
     assert names == [
         "get_grid_state",
         "search_topology_actions",
+        "search_redispatch_actions",
+        "search_curtailment_actions",
         "simulate_action",
         "check_asset_health",
         "screen_post_action",
@@ -131,6 +134,7 @@ def test_screen_post_action_reports_n1_verdict(arc):
     from agent.tools import GridTools
 
     fresh = GridTools()
+    fresh.blackboard.reset()
     res = fresh.search_topology_actions(arc["scoped_subs"])
     best_id = res["candidates"][0]["action_id"]
     verdict = fresh.screen_post_action(best_id)

@@ -1505,7 +1505,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run it**
 
-Run: `MPLCONFIGDIR=$TMPDIR/mpl .venv/bin/python verify_second_best.py`
+Run: `MPLCONFIGDIR=$TMPDIR/mpl .venv/bin/python scripts/verify_second_best.py`
 Expected: `GO - saved .../scenarios/second_best_118.json` with rho < 1.0.
 If NO-GO: the constraint-twist demo beat changes — follow the script's
 hint (wider scope, or exclude a different substation) and update the crib

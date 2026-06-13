@@ -5,7 +5,7 @@ Build the Voltify Grid Advisor Ring on top of the existing Grid Operations
 agent. The Ops agent remains the only actor that mutates Grid2Op state; advisor
 agents write constraints, verdicts, and decisions through file artifacts.
 
-Primary spec: `MULTI_AGENT_SPEC.md`.
+Primary spec: `docs/MULTI_AGENT_SPEC.md`.
 
 ## Current State
 
@@ -18,7 +18,7 @@ The single-agent 118-bus spine exists under `grid-agent/agent/`:
 - `ui/index.html` polls the file artifacts and renders the grid/feed.
 - `bench/screening.py` is the older standalone N-1 screening script.
 
-The multi-agent work now has items 1 and 2 from `MULTI_AGENT_SPEC.md` started:
+The multi-agent work now has items 1 and 2 from `docs/MULTI_AGENT_SPEC.md` started:
 
 1. Blackboard + feed `agent` field + UI lanes.
 2. Scenario 6 Screening advisor via `screen_post_action(action_id)`.
@@ -68,7 +68,7 @@ Modified:
 
 New/untracked:
 
-- `MULTI_AGENT_SPEC.md`
+- `docs/MULTI_AGENT_SPEC.md`
 - `agent/advisors/__init__.py`
 - `agent/advisors/blackboard.py`
 - `agent/advisors/screening.py`
@@ -192,8 +192,7 @@ mlx-community/gemma-4-26B-A4B-it-qat-4bit
 
 ## Caveats
 
-- `MULTI_AGENT_SPEC.md` is untracked. Decide whether to commit it with this
-  implementation.
+- Design and handoff docs now live under `docs/`.
 - The Screening regression is intentionally slow because it performs 186 env
   copy/step checks. Current full test suite takes about 50 seconds.
 - Grid2Op warns that `numba` is not installed. Tests still pass; performance

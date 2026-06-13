@@ -1,7 +1,22 @@
 # Grid Operation Agent (Challenge 5)
 
 LLM agent that returns an overloaded power grid to a safe state while narrating
-its reasoning. Built on Grid2Op (IEEE case14 sandbox to start).
+its reasoning. Built on Grid2Op with a 118-bus demo scenario and a multi-agent
+advisor ring.
+
+## Project layout
+
+```text
+agent/       Runtime agent, tools, prompts, advisor backends
+bench/       Benchmark and N-1 screening utilities
+data/        Small checked-in data inputs
+docs/        Product/spec/planning/handoff documents
+scenarios/   Scripted demo scenario data
+scripts/     One-off spike and verification scripts
+tests/       Pytest suite
+ui/          Static demo UI and local server
+artifacts/   Checked-in demo outputs, screenshots, and video
+```
 
 ## Spike result (verified)
 
@@ -22,7 +37,7 @@ agent tool call.
 ```bash
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -r requirements.txt
-.venv/bin/python spike_overload_rescue.py
+.venv/bin/python scripts/spike_overload_rescue.py
 ```
 
 Note: system python3 is 3.9 (too old), homebrew is 3.14 (too new for wheels).
@@ -51,13 +66,25 @@ make test    # run the test suite
 ## Architecture sketch
 
 - **Env**: Grid2Op `l2rpn_case14_sandbox` (later: bigger L2RPN envs)
-- **Agent tools** (engineer):
+- **Agent tools**:
   - `get_grid_state` — loads, gens, line flows, rho per line
-  - `simulate_action` — dry-run any action via `obs.simulate()`
+  - `search_topology_actions` — find grounded candidate topology actions
+  - `simulate_action` — dry-run a registered candidate action
+  - `check_asset_health` — ask Asset Health for veto/warn/ok
+  - `screen_post_action` — ask Screening for post-action N-1 verdict
   - `apply_action` — step the env
-- **Agent loop**: Claude reasons over state, proposes candidate actions,
-  simulates, applies best, narrates each step
+- **Agent loop**: local OpenAI-compatible model reasons over tool results,
+  simulates candidates, consults advisors, applies only authorized actions,
+  and narrates each step.
 - **Baseline** (for benchmark slide): brute-force topology search
   (already in spike) + do-nothing
 - **Scenarios** (energy expert): pick dramatic-but-solvable overload cases,
   define safe-state metric
+
+## Demo video
+
+The cut screen recording is checked in at:
+
+```text
+artifacts/voltify.mp4
+```

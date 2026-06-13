@@ -2,7 +2,7 @@
 
 Technical spec implementing `PRD.md`. The PRD owns the what/why; this document
 owns the how: architecture, tool schemas, loop design, file layout, data
-contracts. Grounded in the verified spike (`verify_118_arc.py`,
+contracts. Grounded in the verified spike (`scripts/verify_118_arc.py`,
 `scenarios/arc_118.json`).
 
 ## 1. Architecture overview
@@ -65,14 +65,14 @@ grid-agent/
   data_grid2op/      # downloaded env (exists)
 ```
 
-Existing spike scripts (`spike_*.py`, `verify_118_arc.py`) stay untouched at
-the top level as reference.
+Existing spike scripts (`scripts/spike_*.py`, `scripts/verify_118_arc.py`) stay
+available as reference.
 
 ## 3. Tool layer
 
 Four tools. All return compact JSON strings — top-k summaries, never full
 186-line dumps (local model context budget). Shared helpers lifted from
-`verify_118_arc.py`: `scoped_substations()` (overload endpoints + n-hop
+`scripts/verify_118_arc.py`: `scoped_substations()` (overload endpoints + n-hop
 growth), `MAX_ACTIONS_PER_SUB = 600` cap.
 
 ### 3.1 `get_grid_state`
@@ -311,7 +311,7 @@ projector-legible (PRD §13) — first thing to check once render.py exists.**
   danger criteria). Output: `artifacts/screening_118.json` + markdown table.
   Measured budget: ~6 s full screening.
 - `benchmark.py` (deliverable 3): over the dangerous subset, three columns —
-  agent (full loop, local LLM), scoped brute-force (the `verify_118_arc.py`
+  agent (full loop, local LLM), scoped brute-force (the `scripts/verify_118_arc.py`
   search, no LLM), do-nothing. Metrics per scenario: rescued (rho<1.0 y/n),
   actions taken, wallclock. Blind brute-force (~38 min) is quoted as a
   number, never run. Output: JSON + markdown table for the pitch.

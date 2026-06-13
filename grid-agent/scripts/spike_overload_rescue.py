@@ -6,7 +6,7 @@ Story arc:
 3. Search topology actions (bus splitting) via simulate()
 4. Apply best action -> grid back to safe state
 
-Run: .venv/bin/python spike_overload_rescue.py
+Run: .venv/bin/python scripts/spike_overload_rescue.py
 """
 
 import grid2op

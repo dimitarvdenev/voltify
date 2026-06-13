@@ -128,7 +128,7 @@ def test_injector_weather_shift_posts_derate(mutable_tools):
     assert added["from"] == "weather"
     assert added["kind"] == "derate"
     assert 4.0 <= added["pct"] <= 12.0
-    assert entry["kind"] == "event" and entry["agent"] == "grid"
+    assert entry["kind"] == "event" and entry["agent"] == "weather"
     assert inj.writer.steps[-1]["text"] == entry["text"]
 
 
@@ -139,7 +139,7 @@ def test_injector_line_trip_disconnects_a_line(mutable_tools):
     live_after = int(mutable_tools.obs.line_status.sum())
     # either a line dropped out, or the disturbance ended the episode
     assert live_after < live_before or mutable_tools.done
-    assert entry["kind"] == "event" and entry["agent"] == "grid"
+    assert entry["kind"] == "event" and entry["agent"] == "outage"
     assert "max_rho" in entry
     assert inj.writer.steps[-1]["kind"] == "event"
 
