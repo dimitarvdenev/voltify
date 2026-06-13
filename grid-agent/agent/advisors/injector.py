@@ -26,6 +26,7 @@ stays alive when the model endpoint is down.
 
 import random
 import threading
+import traceback
 
 import numpy as np
 
@@ -98,6 +99,9 @@ class EventInjector:
             try:
                 self.fire_once()
             except Exception as exc:  # never let the thread kill the demo
+                # Full traceback to stderr so the root cause is visible; the
+                # bare exception type alone is useless for debugging.
+                traceback.print_exc()
                 self.writer.add(
                     kind="event",
                     agent="grid",
