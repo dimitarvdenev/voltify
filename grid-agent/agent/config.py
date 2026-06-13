@@ -15,7 +15,12 @@ TOP_K_LOADED_LINES = 5
 MAX_LOOP_ITERATIONS = 12
 MAX_APPLY_ATTEMPTS = 2
 STABILITY_CHECK_STEPS = 20
-MAX_TOOL_RESULT_CHARS = 1500
+MAX_TOOL_RESULT_CHARS = 2000
 
 RUN_DIR = os.path.join(ROOT, "artifacts", "run")
 RENDER_DIR = os.path.join(RUN_DIR, "renders")
+
+# Random event injector: autonomous grid dynamics between operator turns.
+INJECTOR_PERIOD_SEC = 30.0
+INJECTOR_JITTER_SEC = 12.0
+INJECTOR_SEED = None

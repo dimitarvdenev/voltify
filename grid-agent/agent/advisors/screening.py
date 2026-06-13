@@ -1,4 +1,11 @@
-"""Post-action N-1 screening advisor backend."""
+"""Post-action N-1 screening advisor backend.
+
+The verdict that matters on a stressed grid is not absolute N-1 security
+(the baseline itself may already be fragile) but whether the proposed fix
+INTRODUCES fragilities: contingencies the current topology absorbs that
+the post-fix topology cannot. n1_secure stays absolute; n1_not_worse is
+the apply gate.
+"""
 
 import time
 
@@ -7,36 +14,21 @@ import numpy as np
 from agent.labels import line_label, substation_label
 
 
-def screen_post_action_env(env, current_obs, action):
-    """Apply action to an env copy, then screen every single-line outage."""
-    t0 = time.time()
-    post_env = env.copy()
-    post_obs, _, post_done, _ = post_env.step(action)
-    if post_done:
-        return {
-            "post_action_rho": None,
-            "n1_secure": False,
-            "post_action_diverged": True,
-            "worst_next_contingency": None,
-            "screened_outages": 0,
-            "insecure_outages": 0,
-            "screen_seconds": round(time.time() - t0, 1),
-            "baseline_comparison": "candidate action collapses the grid before N-1 screening",
-        }
-
+def screen_topology(env, obs):
+    """Screen every in-service single-line outage against this topology."""
     rows = []
-    for line_id in range(post_env.n_line):
-        if not post_obs.line_status[line_id]:
+    for line_id in range(env.n_line):
+        if not obs.line_status[line_id]:
             continue
-        outage_env = post_env.copy()
+        outage_env = env.copy()
         outage = outage_env.action_space({"set_line_status": [(int(line_id), -1)]})
         trip_obs, _, trip_done, _ = outage_env.step(outage)
         if trip_done:
-            row = _outage_row(post_env, post_obs, line_id, True, None, None)
+            row = _outage_row(env, obs, line_id, True, None, None)
         else:
             row = _outage_row(
-                post_env,
-                post_obs,
+                env,
+                obs,
                 line_id,
                 False,
                 float(trip_obs.rho.max()),
@@ -44,21 +36,98 @@ def screen_post_action_env(env, current_obs, action):
             )
         row["insecure"] = bool(row["diverged"] or (row["post_trip_rho"] or 0.0) >= 1.0)
         rows.append(row)
+    return rows
 
-    insecure = [row for row in rows if row["insecure"]]
-    worst = _worst_outage(insecure or rows)
+
+def screen_post_action_env(env, current_obs, action, baseline_rows=None):
+    """Apply action to an env copy, screen all outages, compare to baseline.
+
+    Returns (result, baseline_rows); pass baseline_rows back in to skip
+    re-screening the unchanged current topology.
+    """
+    t0 = time.time()
+    post_env = env.copy()
+    post_obs, _, post_done, _ = post_env.step(action)
+    if post_done:
+        return (
+            {
+                "post_action_rho": None,
+                "n1_secure": False,
+                "n1_not_worse": False,
+                "post_action_diverged": True,
+                "worst_next_contingency": None,
+                "new_fragilities": [],
+                "screened_outages": 0,
+                "insecure_outages": 0,
+                "screen_seconds": round(time.time() - t0, 1),
+                "baseline_comparison": (
+                    "candidate action collapses the grid before N-1 screening"
+                ),
+            },
+            baseline_rows,
+        )
+
+    rows = screen_topology(post_env, post_obs)
+    if baseline_rows is None:
+        baseline_rows = screen_topology(env, current_obs)
+    base_insecure_ids = {row["line_id"] for row in baseline_rows if row["insecure"]}
+    post_insecure = [row for row in rows if row["insecure"]]
+    new_fragilities = [
+        row for row in post_insecure if row["line_id"] not in base_insecure_ids
+    ]
+    post_secure_ids = {row["line_id"] for row in rows if not row["insecure"]}
+    resolved = sorted(base_insecure_ids & post_secure_ids)
+
+    worst = _worst_outage(new_fragilities or post_insecure or rows)
     if worst is not None:
+        worst = dict(worst)
         worst["recovery_action_exists"] = None
         worst["recovery_note"] = "not searched by screen_post_action"
-    comparison = _baseline_comparison(env, current_obs, worst)
+        worst["fragility_is_new"] = worst["line_id"] not in base_insecure_ids
+
+    if new_fragilities:
+        comparison = (
+            f"fix INTRODUCES {len(new_fragilities)} fragilit"
+            f"{'y' if len(new_fragilities) == 1 else 'ies'} the current "
+            f"topology absorbs (worst: line {worst['line_id']}); "
+            f"{len(post_insecure) - len(new_fragilities)} further insecure "
+            "outages are pre-existing"
+        )
+    elif post_insecure:
+        comparison = (
+            f"all {len(post_insecure)} insecure outages are pre-existing in "
+            "the current stressed topology; the fix does not worsen N-1"
+            + (f" and resolves {len(resolved)} of them" if resolved else "")
+        )
+    else:
+        comparison = "post-action topology is fully N-1 secure"
+
+    return (
+        {
+            "post_action_rho": round(float(post_obs.rho.max()), 3),
+            "n1_secure": not post_insecure,
+            "n1_not_worse": not new_fragilities,
+            "worst_next_contingency": worst,
+            "new_fragilities": [
+                _fragility_summary(row) for row in new_fragilities[:3]
+            ],
+            "baseline_insecure_outages": len(base_insecure_ids),
+            "resolved_fragilities": len(resolved),
+            "baseline_comparison": comparison,
+            "screened_outages": len(rows),
+            "insecure_outages": len(post_insecure),
+            "screen_seconds": round(time.time() - t0, 1),
+        },
+        baseline_rows,
+    )
+
+
+def _fragility_summary(row):
     return {
-        "post_action_rho": round(float(post_obs.rho.max()), 3),
-        "n1_secure": not insecure,
-        "worst_next_contingency": worst,
-        "baseline_comparison": comparison,
-        "screened_outages": len(rows),
-        "insecure_outages": len(insecure),
-        "screen_seconds": round(time.time() - t0, 1),
+        "line_id": row["line_id"],
+        "line_label": row["line_label"],
+        "diverged": row["diverged"],
+        "post_trip_rho": row["post_trip_rho"],
     }
 
 
@@ -89,31 +158,6 @@ def _worst_outage(rows):
             1 if row["diverged"] else 0,
             row["post_trip_rho"] if row["post_trip_rho"] is not None else 0.0,
         ),
-    )
-
-
-def _baseline_comparison(env, current_obs, worst):
-    if worst is None:
-        return "no in-service post-action lines were available for N-1 screening"
-    line_id = int(worst["line_id"])
-    if not current_obs.line_status[line_id]:
-        return f"line {line_id} is not in service in the current topology"
-    baseline_env = env.copy()
-    outage = baseline_env.action_space({"set_line_status": [(line_id, -1)]})
-    base_obs, _, base_done, _ = baseline_env.step(outage)
-    if base_done:
-        return f"current topology also diverges after a trip on line {line_id}"
-    base_rho = round(float(base_obs.rho.max()), 3)
-    base_over = int((base_obs.rho >= 1.0).sum())
-    if worst["diverged"]:
-        return (
-            f"current topology after line {line_id} trip reaches max_rho "
-            f"{base_rho} with {base_over} overloaded; post-action topology diverges"
-        )
-    return (
-        f"current topology after line {line_id} trip reaches max_rho {base_rho} "
-        f"with {base_over} overloaded; post-action topology reaches max_rho "
-        f"{worst['post_trip_rho']}"
     )
 
 

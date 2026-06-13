@@ -227,19 +227,31 @@ The strongest *real* beat — reuses `bench/screening.py`.
 Returns:
 
 ```json
-{"action_id": "a-067-12", "post_action_rho": 0.80,
- "n1_secure": false,
- "worst_next_contingency": {"line_id": 154, "post_trip_rho": 1.31,
-   "recovery_action_exists": false},
- "baseline_comparison": "current topology absorbs a 154 trip; post-split topology cannot",
- "screened_outages": 186, "screen_seconds": 6}
+{"action_id": "a-067-2", "post_action_rho": 0.78,
+ "n1_secure": false, "n1_not_worse": true,
+ "new_fragilities": [],
+ "baseline_insecure_outages": 184, "resolved_fragilities": 158,
+ "worst_next_contingency": {"line_id": 6, "diverged": true,
+   "fragility_is_new": false},
+ "baseline_comparison": "all 26 insecure outages are pre-existing in the current stressed topology; the fix does not worsen N-1 and resolves 158 of them",
+ "screened_outages": 186, "screen_seconds": 12}
 ```
 
-Backend = apply the candidate to a **copy** of the env, run the existing
-186-outage screening on the resulting topology, compare against the pre-action
-screening; the Screening agent interprets the delta and names the killer
-contingency. `n1_secure=false` → Ops must surface the trade-off to the operator
-before apply.
+Backend = apply the candidate to a **copy** of the env, run the 186-outage
+screening on the resulting topology AND on the current topology (cached per
+snapshot), diff them; the Screening agent interprets the delta and names the
+killer contingency.
+
+**Verdict semantics (learned from the live grid):** on a stressed snapshot the
+baseline itself is N-1 fragile (184/186 outages insecure on the demo arc), so
+absolute `n1_secure` would block every action. The apply gate is
+**`n1_not_worse`**: false means the fix *introduces* fragilities the current
+topology absorbs (`new_fragilities`) — that is the Scenario-6 trap, and it
+routes to the operator. True with `n1_secure=false` means the remaining
+fragilities are pre-existing; Ops may apply but must say so. Measured ground
+truth on the demo arc: the best fix `a-067-2` introduces nothing and resolves
+158 of 184 pre-existing fragilities; candidate `a-068-9` (rho 0.815) introduces
+a new fragility on line 185 — the trap is real and demonstrable.
 
 ### 3.4 Weather & Field
 
@@ -291,6 +303,14 @@ the human-authority beats:
 Ops maps `choice` to its next action: clear the veto and apply, re-search with
 the offending sub excluded, fold a market option into a hybrid action, or hold
 until the Field clear-time.
+
+**Mechanical enforcement (implemented):** the advisor protocol is not just a
+prompt rule — `apply_action` refuses unless `check_asset_health` and
+`screen_post_action` were called for that `action_id`, and an asset-health
+`block` can only be cleared by an operator `override_veto` decision present on
+the blackboard. The 4-bit model cannot forget or bypass the protocol; the tool
+layer holds the line. (Learned from the first live run, where the model skipped
+the asset check.)
 
 ---
 
@@ -433,6 +453,13 @@ scenario — the constraints arrive as data, exactly like the existing
 ---
 
 ## 7. Build order (on top of the existing 6-task plan)
+
+> **Status (2026-06-13):** built & verified — blackboard + feed lanes (1),
+> Scenario 6 / Screening with `n1_not_worse` semantics (2), Scenario 1 /
+> Weather derate (3), Scenario 2 / Asset veto with mechanical enforcement (4).
+> Backends: `scenarios/weather.json`, `scenarios/assets.json` (stand-in data,
+> clearly marked). Remaining: Market (3) and Field (4) advisors, asset-wear
+> benchmark beat (6).
 
 The single-agent demo (`SPEC.md` §9 tasks 1–3) must work first — it is the
 spine. Then:

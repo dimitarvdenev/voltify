@@ -1,0 +1,38 @@
+{
+  "_note": "Stand-in asset register for the demo. Flags invented but defensible; swap for a real CMMS export later. Substation 67 is deliberately the proven best-fix substation of the demo arc, so the veto beat is solver-true.",
+  "policy": {
+    "warn_margin_ops": 5,
+    "pd_block_note": "switching a breaker with an open partial-discharge flag under fault conditions requires operator sign-off"
+  },
+  "default": {
+    "pd_flag": false,
+    "ops_used_month": 5,
+    "ops_budget_month": 40,
+    "last_inspection": "2026-04"
+  },
+  "breakers": {
+    "67": {
+      "breaker": "B-067",
+      "pd_flag": true,
+      "pd_note": "partial-discharge activity flagged at last inspection (2026-05-28); insulation degradation suspected",
+      "ops_used_month": 37,
+      "ops_budget_month": 40,
+      "last_inspection": "2026-05-28",
+      "inspection_dispatch_minutes": 40
+    },
+    "68": {
+      "breaker": "B-068",
+      "pd_flag": false,
+      "ops_used_month": 6,
+      "ops_budget_month": 40,
+      "last_inspection": "2026-05-12"
+    },
+    "115": {
+      "breaker": "B-115",
+      "pd_flag": false,
+      "ops_used_month": 12,
+      "ops_budget_month": 40,
+      "last_inspection": "2026-05-02"
+    }
+  }
+}

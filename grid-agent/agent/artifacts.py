@@ -2,6 +2,7 @@
 
 import json
 import os
+import threading
 
 from agent.advisors.blackboard import Blackboard
 
@@ -13,13 +14,16 @@ class StepWriter:
         self.blackboard = Blackboard(run_dir)
         self.blackboard.reset()
         self.steps = []
+        # The operator loop and the EventInjector thread both append steps.
+        self._lock = threading.Lock()
         self._flush()
 
     def add(self, **step):
-        step["step"] = len(self.steps) + 1
-        step.setdefault("agent", _agent_for_step(step))
-        self.steps.append(step)
-        self._flush()
+        with self._lock:
+            step["step"] = len(self.steps) + 1
+            step.setdefault("agent", _agent_for_step(step))
+            self.steps.append(step)
+            self._flush()
 
     def _flush(self):
         tmp = self.path + ".tmp"

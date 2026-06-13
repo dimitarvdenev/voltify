@@ -1,0 +1,13 @@
+{
+  "_note": "Stand-in weather feed for the demo. Values invented but defensible; swap for a real DWD feed later. Derate math is real physics (IEEE-738-style ampacity ~ sqrt(Tcond_max - Tambient)).",
+  "station": "Braavos coastal station",
+  "observed_at": "13:45",
+  "ambient_c": 34.0,
+  "trend_c_per_h": 1.5,
+  "conductor_max_c": 80.0,
+  "rating_reference_ambient_c": 25.0,
+  "overhead_corridor_lines": [177],
+  "corridor_name": "Braavos -> Karhold overhead corridor",
+  "wind_ms": 0.6,
+  "wind_note": "near-calm; no convective cooling relief on the overhead corridor"
+}

@@ -2,12 +2,14 @@
 
 import json
 import os
+import threading
 import time
 
 import grid2op
 import numpy as np
 
 from agent import config
+from agent.advisors.asset_health import AssetHealth, narrate as asset_narrate, veto_item
 from agent.advisors.blackboard import Blackboard
 from agent.advisors.screening import screen_post_action_env
 from agent.labels import line_label, substation_label
@@ -25,10 +27,17 @@ class GridTools:
         self.env = grid2op.make(dataset)
         self.env.set_id(chronic_idx)
         self.obs = self.env.reset()
+        # Guards self.env / self.obs against concurrent access by the
+        # operator loop (apply_action) and the EventInjector thread.
+        self.lock = threading.RLock()
         self.registry = {}
         self.meta = {}
         self.done = False
         self.blackboard = Blackboard(config.RUN_DIR)
+        self.asset_health = AssetHealth()
+        self.asset_checked = {}
+        self.screened = {}
+        self._baseline_screen = None
 
     def _degree(self):
         degree = [0 for _ in range(self.env.n_sub)]
@@ -88,22 +97,59 @@ class GridTools:
             subs = grown
         return sorted(subs)
 
+    def _derate_map(self, board):
+        """line_id -> derate pct from weather constraints on the blackboard."""
+        derates = {}
+        for item in board.get("constraints", []):
+            if item.get("kind") == "derate" and item.get("line_id") is not None:
+                derates[int(item["line_id"])] = float(item["pct"])
+        return derates
+
+    def _apply_derates(self, summary, derates):
+        pct = derates.get(summary["line_id"])
+        if pct is not None:
+            summary["derate_pct"] = pct
+            summary["effective_rho"] = round(
+                summary["rho"] / (1.0 - pct / 100.0), 3
+            )
+        return summary
+
     def get_grid_state(self):
         rho = self.obs.rho
         overloaded = np.where(rho > 1.0)[0]
         top = np.argsort(-rho)[: config.TOP_K_LOADED_LINES]
         board = self.blackboard.read()
-        return {
+        derates = self._derate_map(board)
+        state = {
             "max_rho": round(float(rho.max()), 3),
             "n_overloaded": int(len(overloaded)),
-            "overloaded_lines": [self._line_summary(line) for line in overloaded],
-            "top_loaded_lines": [self._line_summary(line) for line in top],
+            "overloaded_lines": [
+                self._apply_derates(self._line_summary(line), derates)
+                for line in overloaded
+            ],
+            "top_loaded_lines": [
+                self._apply_derates(self._line_summary(line), derates)
+                for line in top
+            ],
             "disconnected_lines": [
                 int(line) for line in np.where(~self.obs.line_status)[0]
             ],
             "candidate_scope_subs": self._scoped_subs(n_hops=1),
             "blackboard": _compact_blackboard(board),
         }
+        if derates:
+            effective = [
+                float(rho[line]) / (1.0 - pct / 100.0)
+                for line, pct in derates.items()
+            ]
+            state["max_effective_rho"] = round(
+                max(state["max_rho"], max(effective)), 3
+            )
+            state["derate_note"] = (
+                "weather derate active: effective_rho is the binding "
+                "loading on derated lines, not nameplate rho"
+            )
+        return state
 
     def _action_effects(self, act, sim_obs):
         reconnects = [
@@ -200,6 +246,16 @@ class GridTools:
             "reconnects_lines": reconnects,
         }
 
+    def _operator_override(self, action_id):
+        for decision in self.blackboard.read().get("decisions", []):
+            if decision.get("choice") == "override_veto" and decision.get("ref") in (
+                action_id,
+                None,
+                "",
+            ):
+                return True
+        return False
+
     def apply_action(self, action_id):
         act = self.registry.get(action_id)
         if act is None:
@@ -207,7 +263,33 @@ class GridTools:
                 "error": f"unknown action_id {action_id!r}; "
                 "run search_topology_actions first"
             }
-        self.obs, _, self.done, _ = self.env.step(act)
+        if action_id not in self.asset_checked:
+            return {
+                "error": f"protocol: consult check_asset_health({action_id!r}) "
+                "before applying"
+            }
+        if action_id not in self.screened:
+            return {
+                "error": f"protocol: consult screen_post_action({action_id!r}) "
+                "before applying"
+            }
+        check = self.asset_checked[action_id]
+        if check["verdict"] == "block" and not self._operator_override(action_id):
+            return {
+                "blocked": True,
+                "by": "asset_health",
+                "error": (
+                    "Asset Health veto stands on this action; it can only be "
+                    "cleared by an operator decision with choice "
+                    "'override_veto' (sent as a structured decision from the "
+                    "operator console). Offer the operator the options or "
+                    "take a candidate at another substation."
+                ),
+                "reasons": check["reasons"],
+            }
+        with self.lock:
+            self.obs, _, self.done, _ = self.env.step(act)
+            self._baseline_screen = None
         if self.done:
             return {
                 "applied": True,
@@ -215,7 +297,7 @@ class GridTools:
                 "note": "grid collapsed after applying this action",
             }
         stable, worst_seen, steps = self._stability_check()
-        return {
+        result = {
             "applied": True,
             "max_rho": round(float(self.obs.rho.max()), 3),
             "n_overloaded": int((self.obs.rho > 1.0).sum()),
@@ -223,6 +305,34 @@ class GridTools:
             "stable": stable,
             "worst_rho_during_check": round(worst_seen, 3),
         }
+        meta = self.meta.get(action_id)
+        if meta:
+            record = self.asset_health.record_switch(
+                meta["substation"], meta["switching_ops"]
+            )
+            result["asset_wear"] = {
+                "breaker": record["breaker"],
+                "ops_used_month": record["ops_used_month"],
+                "ops_remaining_month": record["ops_remaining_month"],
+            }
+        return result
+
+    def check_asset_health(self, action_id):
+        meta = self.meta.get(action_id)
+        if meta is None:
+            return {
+                "error": f"unknown action_id {action_id!r}; "
+                "run search_topology_actions first"
+            }
+        check = self.asset_health.check_action(
+            meta["substation"], meta["switching_ops"]
+        )
+        check["action_id"] = action_id
+        check["narration"] = asset_narrate(action_id, check)
+        if check["verdict"] == "block":
+            self.blackboard.append("vetoes", veto_item(action_id, check))
+        self.asset_checked[action_id] = check
+        return check
 
     def screen_post_action(self, action_id):
         act = self.registry.get(action_id)
@@ -231,8 +341,11 @@ class GridTools:
                 "error": f"unknown action_id {action_id!r}; "
                 "run search_topology_actions first"
             }
-        result = screen_post_action_env(self.env, self.obs, act)
+        result, self._baseline_screen = screen_post_action_env(
+            self.env, self.obs, act, baseline_rows=self._baseline_screen
+        )
         result["action_id"] = action_id
+        self.screened[action_id] = result
         if action_id in self.meta:
             meta = self.meta[action_id]
             result["candidate"] = {
@@ -243,8 +356,20 @@ class GridTools:
         self.blackboard.append("screening_verdicts", _screening_blackboard_item(result))
         return result
 
+    def step_external(self, act):
+        """Advance the REAL grid by one step from outside the operator loop
+        (the EventInjector). Returns (done, obs). Resets the screening
+        baseline because the live topology/timeseries has moved."""
+        with self.lock:
+            if self.done:
+                return True, self.obs
+            self.obs, _, self.done, _ = self.env.step(act)
+            self._baseline_screen = None
+            return self.done, self.obs
+
     def _stability_check(self):
-        sim_env = self.env.copy()
+        with self.lock:
+            sim_env = self.env.copy()
         do_nothing = sim_env.action_space({})
         worst = float(self.obs.rho.max())
         for step in range(config.STABILITY_CHECK_STEPS):
@@ -260,6 +385,7 @@ class GridTools:
             "get_grid_state",
             "search_topology_actions",
             "simulate_action",
+            "check_asset_health",
             "screen_post_action",
             "apply_action",
         ):
@@ -272,7 +398,8 @@ class GridTools:
             result = {"error": f"{name} failed: {type(exc).__name__}: {exc}"}
         out = json.dumps(result, separators=(",", ":"))
         if len(out) > config.MAX_TOOL_RESULT_CHARS:
-            out = json.dumps({"truncated": True, "preview": out[:1400]}, separators=(",", ":"))
+            preview = out[: config.MAX_TOOL_RESULT_CHARS - 100]
+            out = json.dumps({"truncated": True, "preview": preview}, separators=(",", ":"))
         return out
 
 
@@ -283,6 +410,7 @@ def _screening_blackboard_item(result):
         "kind": "post_action_n1",
         "action_id": result.get("action_id"),
         "n1_secure": result.get("n1_secure"),
+        "n1_not_worse": result.get("n1_not_worse"),
         "post_action_rho": result.get("post_action_rho"),
         "worst_next_contingency": {
             "line_id": worst.get("line_id"),
@@ -302,13 +430,34 @@ def _compact_blackboard(board):
         latest_screening = {
             "action_id": latest.get("action_id"),
             "n1_secure": latest.get("n1_secure"),
+            "n1_not_worse": latest.get("n1_not_worse"),
             "post_action_rho": latest.get("post_action_rho"),
             "worst_next_contingency": latest.get("worst_next_contingency"),
             "insecure_outages": latest.get("insecure_outages"),
         }
     return {
-        "constraints": board["constraints"],
-        "vetoes": board["vetoes"],
+        "constraints": [
+            {
+                "from": item.get("from"),
+                "kind": item.get("kind"),
+                "line_id": item.get("line_id"),
+                "sub": item.get("sub"),
+                "pct": item.get("pct"),
+                "reason": (item.get("reason") or "")[:120],
+            }
+            for item in board["constraints"][-5:]
+        ],
+        "vetoes": [
+            {
+                "from": item.get("from"),
+                "action_id": item.get("action_id"),
+                "level": item.get("level"),
+                "override": item.get("override"),
+                "substation": item.get("substation"),
+                "reason": (item.get("reason") or "")[:120],
+            }
+            for item in board["vetoes"][-3:]
+        ],
         "latest_screening_verdict": latest_screening,
         "availability": board["availability"],
         "clock": board["clock"],
@@ -379,6 +528,24 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "check_asset_health",
+            "description": (
+                "Ask the Asset Health advisor whether a candidate action is "
+                "authorized given equipment condition (partial-discharge "
+                "flags, breaker switching-cycle budget). Returns verdict "
+                "ok | warn | block. A block requires an operator decision "
+                "to override. Use before apply_action."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"action_id": {"type": "string"}},
+                "required": ["action_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "screen_post_action",
             "description": (
                 "Ask the Screening advisor to run N-1 screening on the "
@@ -399,7 +566,10 @@ TOOLS_SCHEMA = [
             "name": "apply_action",
             "description": (
                 "Apply an action to the REAL grid, then verify stability over "
-                "the next steps. Use only after simulating."
+                "the next steps. Protocol-enforced: requires prior "
+                "check_asset_health and screen_post_action for this "
+                "action_id; an asset-health block requires an operator "
+                "override_veto decision."
             ),
             "parameters": {
                 "type": "object",

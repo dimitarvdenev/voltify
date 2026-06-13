@@ -77,6 +77,19 @@ def test_apply_action_rescues_grid(arc):
     fresh = GridTools()
     res = fresh.search_topology_actions(arc["scoped_subs"])
     best_id = res["candidates"][0]["action_id"]
+
+    # protocol guards: apply refuses until both advisors were consulted
+    assert "error" in fresh.apply_action(best_id)
+    check = fresh.check_asset_health(best_id)
+    fresh.screen_post_action(best_id)
+    if check["verdict"] == "block":
+        blocked = fresh.apply_action(best_id)
+        assert blocked.get("blocked") is True and blocked["by"] == "asset_health"
+        fresh.blackboard.append(
+            "decisions",
+            {"kind": "decision", "ref": best_id, "choice": "override_veto"},
+        )
+
     out = fresh.apply_action(best_id)
     assert out["applied"] is True
     assert out["max_rho"] == pytest.approx(arc["rescued_max_rho_applied"], abs=0.05)
@@ -92,6 +105,7 @@ def test_schema_names_match_methods(tools):
         "get_grid_state",
         "search_topology_actions",
         "simulate_action",
+        "check_asset_health",
         "screen_post_action",
         "apply_action",
     ]
@@ -100,10 +114,12 @@ def test_schema_names_match_methods(tools):
 
 
 def test_dispatch_returns_compact_json(tools):
+    from agent import config
+
     out = tools.dispatch("get_grid_state", {})
     parsed = json.loads(out)
     assert "max_rho" in parsed
-    assert len(out) <= 1500
+    assert len(out) <= config.MAX_TOOL_RESULT_CHARS
 
 
 def test_dispatch_unknown_tool(tools):
@@ -124,5 +140,11 @@ def test_screen_post_action_reports_n1_verdict(arc):
     assert verdict["screened_outages"] > 100
     assert isinstance(verdict["n1_secure"], bool)
     assert "worst_next_contingency" in verdict
+    # ground truth on the demo arc: the sub-67 fix introduces no new
+    # fragilities and resolves most of the stressed baseline's
+    assert verdict["n1_not_worse"] is True
+    assert verdict["new_fragilities"] == []
+    assert verdict["resolved_fragilities"] > 100
+    assert verdict["baseline_insecure_outages"] > 100
     board = fresh.blackboard.read()
     assert board["screening_verdicts"][-1]["action_id"] == best_id

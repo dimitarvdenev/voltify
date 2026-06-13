@@ -275,6 +275,59 @@
     font-family: "IBM Plex Mono", monospace; font-size: 9px;
     letter-spacing: .2em; color: var(--violet);
   }
+  .narration.weather,
+  .constraint.weather {
+    align-self: flex-start;
+    background: linear-gradient(180deg, rgba(255,196,87,.12), rgba(255,196,87,.04));
+    border: 1px solid rgba(255,196,87,.28);
+    border-left: 2px solid var(--amber);
+    border-radius: 3px 9px 9px 9px;
+    padding: 10px 14px; color: #ffeccb; white-space: pre-wrap;
+  }
+  .narration.weather::before,
+  .constraint.weather::before {
+    content: "◆ WEATHER"; display: block; margin-bottom: 5px;
+    font-family: "IBM Plex Mono", monospace; font-size: 9px;
+    letter-spacing: .2em; color: var(--amber);
+  }
+  .narration.asset_health,
+  .verdict.asset_health,
+  .veto.asset_health {
+    align-self: flex-start;
+    background: linear-gradient(180deg, rgba(255,107,107,.12), rgba(255,107,107,.04));
+    border: 1px solid rgba(255,107,107,.28);
+    border-left: 2px solid #ff6b6b;
+    border-radius: 3px 9px 9px 9px;
+    padding: 10px 14px; color: #ffd9d9; white-space: pre-wrap;
+  }
+  .narration.asset_health::before,
+  .verdict.asset_health::before {
+    content: "◆ ASSET HEALTH"; display: block; margin-bottom: 5px;
+    font-family: "IBM Plex Mono", monospace; font-size: 9px;
+    letter-spacing: .2em; color: #ff6b6b;
+  }
+  .veto.asset_health::before {
+    content: "■ ASSET HEALTH — VETO"; display: block; margin-bottom: 5px;
+    font-family: "IBM Plex Mono", monospace; font-size: 9px;
+    letter-spacing: .2em; color: #ff6b6b;
+  }
+
+  /* autonomous grid events (random injector) */
+  .event.grid,
+  .narration.grid {
+    align-self: stretch; max-width: 100%;
+    background: linear-gradient(180deg, rgba(124,255,178,.12), rgba(124,255,178,.04));
+    border: 1px solid rgba(124,255,178,.28);
+    border-left: 2px solid #7cffb2;
+    border-radius: 3px 9px 9px 9px;
+    padding: 10px 14px; color: #d8ffe8; white-space: pre-wrap;
+  }
+  .event.grid::before,
+  .narration.grid::before {
+    content: "⚡ GRID EVENT"; display: block; margin-bottom: 5px;
+    font-family: "IBM Plex Mono", monospace; font-size: 9px;
+    letter-spacing: .2em; color: #7cffb2;
+  }
 
   /* tool telemetry */
   .tool {

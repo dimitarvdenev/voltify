@@ -10,7 +10,9 @@ import os
 import time
 
 from agent import config
+from agent.advisors import weather
 from agent.advisors.blackboard import Blackboard
+from agent.advisors.injector import EventInjector
 from agent.artifacts import StepWriter
 from agent.llm import make_client, run_loop
 from agent.prompts import SCENARIO_BRIEF, SYSTEM_PROMPT
@@ -55,6 +57,23 @@ def main():
         action="store_true",
         help="read operator messages from UI inbox file",
     )
+    parser.add_argument(
+        "--no-weather",
+        action="store_true",
+        help="skip the Weather advisor's derate bulletin at session open",
+    )
+    parser.add_argument(
+        "--inject",
+        action="store_true",
+        help="run the random event injector: autonomous grid dynamics "
+        "(forced outages, load drift, derates) between operator turns",
+    )
+    parser.add_argument(
+        "--inject-period",
+        type=float,
+        default=config.INJECTOR_PERIOD_SEC,
+        help="mean seconds between injected events (default %(default)s)",
+    )
     args = parser.parse_args()
 
     tools = GridTools()
@@ -67,8 +86,11 @@ def main():
         return "rescued" if tools.obs.rho.max() < 1.0 else "overloaded"
 
     def emit_render(tag):
-        scope = tools.get_grid_state()["candidate_scope_subs"] or None
-        full, zoom = renderer.render(tools.obs, tag, focus_subs=scope)
+        # Lock so a render never reads obs mid env-step and two renders
+        # (operator loop vs injector) never run concurrently.
+        with tools.lock:
+            scope = tools.get_grid_state()["candidate_scope_subs"] or None
+            full, zoom = renderer.render(tools.obs, tag, focus_subs=scope)
         rel = lambda path: os.path.relpath(path, config.ROOT)
         return rel(full), rel(zoom)
 
@@ -81,6 +103,21 @@ def main():
         render_full=full,
         render_zoom=zoom,
     )
+
+    weather_bulletin = None
+    if not args.no_weather:
+        # reactive Weather advisor: posts derate constraints to the
+        # blackboard before the Ops agent's first look at the grid
+        assessment, bulletin = weather.publish(tools.blackboard, client)
+        writer.add(
+            kind="constraint",
+            agent="weather",
+            text=bulletin,
+            grid_status=grid_status(),
+            max_rho=round(float(tools.obs.rho.max()), 3),
+        )
+        weather_bulletin = bulletin
+        print(f"\nweather> {bulletin}\n")
 
     def on_event(kind, payload):
         entry = {
@@ -97,6 +134,9 @@ def main():
                 entry["agent"] = "screening"
                 entry["kind"] = "verdict"
                 entry["text"] = _screening_feed_text(payload["result"])
+            if payload["tool"] == "check_asset_health":
+                entry["agent"] = "asset_health"
+                entry["kind"], entry["text"] = _asset_feed(payload["result"])
             if payload["tool"] == "apply_action":
                 tag = f"step_{len(writer.steps)}_applied"
                 entry["render_full"], entry["render_zoom"] = emit_render(tag)
@@ -104,35 +144,65 @@ def main():
             entry["text"] = payload["text"]
         writer.add(**entry)
 
+    brief = SCENARIO_BRIEF
+    if weather_bulletin:
+        brief += f"\nAdvisor bulletin (Weather): {weather_bulletin}\n"
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": SCENARIO_BRIEF},
+        {"role": "user", "content": brief},
     ]
 
-    print("Operator console. Type message (or 'quit').")
-    while True:
-        if inbox:
-            operator_msg = inbox.next_message()
-        else:
-            operator_msg = input("operator> ").strip()
-        if operator_msg.lower() in ("quit", "exit"):
-            break
-        if not operator_msg:
-            continue
-        if len(messages) > 2 or messages[-1]["role"] != "user":
-            messages.append({"role": "user", "content": operator_msg})
-        else:
-            messages[-1]["content"] += "\n\nOperator: " + operator_msg
-        writer.add(kind="operator", text=operator_msg)
-        final = run_loop(
-            client,
-            config.LLM_MODEL,
-            messages,
-            TOOLS_SCHEMA,
-            tools.dispatch,
-            on_event=on_event,
+    injector = None
+    if args.inject:
+        injector = EventInjector(
+            tools,
+            writer,
+            render_fn=emit_render,
+            client=client,
+            period=args.inject_period,
         )
-        print(f"\nagent> {final}\n")
+        injector.start()
+        print(f"\nevents> injector live (~{args.inject_period:.0f}s cadence)\n")
+
+    print("Operator console. Type message (or 'quit').")
+    try:
+        while True:
+            if inbox:
+                operator_msg = inbox.next_message()
+            else:
+                operator_msg = input("operator> ").strip()
+            if operator_msg.lower() in ("quit", "exit"):
+                break
+            if not operator_msg:
+                continue
+            if len(messages) > 2 or messages[-1]["role"] != "user":
+                messages.append({"role": "user", "content": operator_msg})
+            else:
+                messages[-1]["content"] += "\n\nOperator: " + operator_msg
+            writer.add(kind="operator", text=operator_msg)
+            final = run_loop(
+                client,
+                config.LLM_MODEL,
+                messages,
+                TOOLS_SCHEMA,
+                tools.dispatch,
+                on_event=on_event,
+            )
+            print(f"\nagent> {final}\n")
+    finally:
+        if injector:
+            injector.stop()
+
+
+def _asset_feed(result_json):
+    try:
+        result = json.loads(result_json)
+    except json.JSONDecodeError:
+        return "verdict", result_json
+    if "error" in result:
+        return "verdict", "Asset Health error: " + result["error"]
+    kind = "veto" if result.get("verdict") == "block" else "verdict"
+    return kind, result.get("narration", "")
 
 
 def _screening_feed_text(result_json):
@@ -142,7 +212,12 @@ def _screening_feed_text(result_json):
         return result_json
     if "error" in result:
         return "Screening error: " + result["error"]
-    verdict = "N-1 secure" if result.get("n1_secure") else "N-1 fragile"
+    if result.get("n1_secure"):
+        verdict = "N-1 secure"
+    elif result.get("n1_not_worse"):
+        verdict = "N-1 not worsened (pre-existing fragilities only)"
+    else:
+        verdict = "HOLD - fix introduces new N-1 fragilities"
     worst = result.get("worst_next_contingency") or {}
     line = worst.get("line_label") or f"line {worst.get('line_id')}"
     if worst.get("diverged"):
