@@ -230,6 +230,37 @@
   .msg { max-width: 94%; animation: rise .35s cubic-bezier(.2,.7,.2,1) both; }
   @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 
+  /* markdown rendering inside messages */
+  .msg.md { white-space: normal; }
+  .msg.md .ln { min-height: 1em; }
+  .msg.md .ln:empty { display: none; }
+  .msg.md strong { color: #fff; font-weight: 600; }
+  .msg.md em { font-style: italic; }
+  .msg.md code {
+    font-family: "IBM Plex Mono", monospace; font-size: .88em;
+    background: rgba(255,255,255,.08); padding: 1px 5px;
+    border-radius: 4px; border: 1px solid var(--line-soft);
+  }
+  .msg.md pre {
+    background: rgba(0,0,0,.3); border: 1px solid var(--line);
+    border-radius: 6px; padding: 10px 12px; overflow-x: auto; margin: 6px 0;
+  }
+  .msg.md pre code { background: none; border: none; padding: 0; }
+  .msg.md ul, .msg.md ol { margin: 4px 0; padding-left: 20px; }
+  .msg.md li { margin: 2px 0; }
+  .msg.md h1, .msg.md h2, .msg.md h3, .msg.md h4 {
+    margin: 6px 0 3px; font-weight: 600; line-height: 1.25;
+  }
+  .msg.md h1 { font-size: 1.25em; }
+  .msg.md h2 { font-size: 1.15em; }
+  .msg.md h3 { font-size: 1.05em; }
+  .msg.md h4 { font-size: 1em; }
+  .msg.md a { color: var(--blue); text-decoration: underline; }
+  .msg.md blockquote {
+    margin: 4px 0; padding-left: 10px;
+    border-left: 2px solid var(--line); color: var(--muted);
+  }
+
   /* operator command */
   .operator {
     align-self: flex-end; max-width: 88%;
@@ -276,19 +307,37 @@
     letter-spacing: .2em; color: var(--violet);
   }
   .narration.weather,
-  .constraint.weather {
-    align-self: flex-start;
+  .constraint.weather,
+  .event.weather {
+    align-self: stretch; max-width: 100%;
     background: linear-gradient(180deg, rgba(255,196,87,.12), rgba(255,196,87,.04));
     border: 1px solid rgba(255,196,87,.28);
     border-left: 2px solid var(--amber);
     border-radius: 3px 9px 9px 9px;
-    padding: 10px 14px; color: #ffeccb; white-space: pre-wrap;
+    padding: 10px 14px; color: #ffeccb;
   }
   .narration.weather::before,
-  .constraint.weather::before {
+  .constraint.weather::before,
+  .event.weather::before {
     content: "◆ WEATHER"; display: block; margin-bottom: 5px;
     font-family: "IBM Plex Mono", monospace; font-size: 9px;
     letter-spacing: .2em; color: var(--amber);
+  }
+  .event.weather::before { content: "☀ THERMAL DERATE"; }
+
+  /* forced outage events */
+  .event.outage {
+    align-self: stretch; max-width: 100%;
+    background: linear-gradient(180deg, rgba(255,107,107,.14), rgba(255,107,107,.04));
+    border: 1px solid rgba(255,107,107,.3);
+    border-left: 2px solid #ff6b6b;
+    border-radius: 3px 9px 9px 9px;
+    padding: 10px 14px; color: #ffd9d9;
+  }
+  .event.outage::before {
+    content: "⚠ FORCED OUTAGE"; display: block; margin-bottom: 5px;
+    font-family: "IBM Plex Mono", monospace; font-size: 9px;
+    letter-spacing: .2em; color: #ff6b6b;
   }
   .narration.asset_health,
   .verdict.asset_health,
@@ -447,14 +496,51 @@ async function poll() {
     const response = await fetch('/artifacts/run/steps.json?t=' + Date.now());
     const steps = await response.json();
     const feed = document.getElementById('feed');
+
+function escapeHtml(s) {
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function mdInline(s) {
+  return s
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>')
+    .replace(/(^|[^_])_([^_]+)_/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+function mdToHtml(src) {
+  const lines = escapeHtml(src).split('\n');
+  let html = '', list = null, inFence = false, fence = '';
+  const closeList = () => { if (list) { html += '</' + list + '>'; list = null; } };
+  for (const raw of lines) {
+    if (/^\s*```/.test(raw)) {
+      if (inFence) { html += fence + '</code></pre>'; inFence = false; fence = ''; }
+      else { closeList(); html += '<pre><code>'; inFence = true; }
+      continue;
+    }
+    if (inFence) { fence += raw + '\n'; continue; }
+    const line = raw.trim();
+    let m;
+    if (m = line.match(/^(#{1,4})\s+(.*)$/)) { closeList(); const n = m[1].length; html += '<h' + n + '>' + mdInline(m[2]) + '</h' + n + '>'; continue; }
+    if (m = line.match(/^>\s?(.*)$/)) { closeList(); html += '<blockquote>' + mdInline(m[1]) + '</blockquote>'; continue; }
+    if (m = line.match(/^[-*•]\s+(.*)$/)) { if (list !== 'ul') { closeList(); list = 'ul'; html += '<ul>'; } html += '<li>' + mdInline(m[1]) + '</li>'; continue; }
+    if (m = line.match(/^\d+[.)]\s+(.*)$/)) { if (list !== 'ol') { closeList(); list = 'ol'; html += '<ol>'; } html += '<li>' + mdInline(m[1]) + '</li>'; continue; }
+    closeList();
+    html += '<div class="ln">' + mdInline(line) + '</div>';
+  }
+  if (inFence) html += fence + '</code></pre>';
+  closeList();
+  return html;
+}
     for (const step of steps.slice(nSteps)) {
       const div = document.createElement('div');
       if (step.kind === 'tool') {
         div.className = 'tool ' + (step.agent || 'ops');
         div.textContent = step.tool;
       } else {
-        div.className = 'msg ' + step.kind + ' ' + (step.agent || 'ops');
-        div.textContent = step.text || '';
+        div.className = 'msg md ' + step.kind + ' ' + (step.agent || 'ops');
+        div.innerHTML = mdToHtml(step.text || '');
       }
       feed.appendChild(div);
       if (step.render_full) renders.full = step.render_full;

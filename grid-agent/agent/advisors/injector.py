@@ -32,6 +32,11 @@ import numpy as np
 from agent import config
 from agent.advisors.voice import advisor_voice
 
+# A forced outage should stress the grid without instantly blacking it out.
+# Among outages the grid survives, prefer the most stressful one whose
+# post-trip worst loading stays at or below this ceiling.
+TRIP_RHO_CEILING = 1.6
+
 
 SYSTEM_PROMPT = """\
 You are the Grid Events desk in a transmission control room: the dispatcher
@@ -116,13 +121,14 @@ class EventInjector:
     # ---- event handlers --------------------------------------------------
 
     def _event_line_trip(self):
-        live = [
-            int(line)
-            for line in np.where(self.tools.obs.line_status)[0]
-        ]
-        if not live:
+        # N-1 screen every live outage on env copies (no mutation) and only
+        # trip a line the grid actually survives. A blind random trip on this
+        # stressed grid can pick the one contingency that diverges the solver
+        # and blacks out the whole run before the operator can react.
+        line_id = self._pick_survivable_outage()
+        if line_id is None:
+            # Every outage diverges (grid too fragile) - don't blackout; drift.
             return self._event_load_drift()
-        line_id = self.rng.choice(live)
         summary = self.tools._line_summary(line_id)
         act = self.tools.env.action_space({"set_line_status": [(line_id, -1)]})
         done, _ = self.tools.step_external(act)
@@ -138,7 +144,40 @@ class EventInjector:
             f"Loadings redistributing - worst is now {facts['max_rho_after']}, "
             f"{facts['n_overloaded_after']} line(s) over limit."
         )
-        return self._emit(facts, fallback, render=True, game_over=done)
+        return self._emit(facts, fallback, render=True, game_over=done, agent="outage")
+
+    def _pick_survivable_outage(self):
+        """Return a line_id whose forced outage the grid survives, biased
+        toward a meaningful (but recoverable) disturbance. None if every
+        single-line outage diverges the solver.
+
+        Uses obs.simulate (grid2op's no-copy one-step forecast) - NOT
+        env.copy(). This env is a MultiMixEnvironment whose .copy() leaves
+        a half-initialized clone; copying it per-line recurses to death in
+        __del__ and raises 'NoneType has no attribute items'."""
+        survivable = []  # (line_id, post_trip_max_rho)
+        with self.tools.lock:
+            obs = self.tools.obs
+            live = [int(line) for line in np.where(obs.line_status)[0]]
+            for line_id in live:
+                act = self.tools.env.action_space(
+                    {"set_line_status": [(line_id, -1)]}
+                )
+                try:
+                    sim_obs, _, sim_done, _ = obs.simulate(act)
+                except Exception:
+                    continue  # treat un-simulatable outage as unsafe
+                if sim_done or sim_obs is None:
+                    continue
+                survivable.append((line_id, float(sim_obs.rho.max())))
+        if not survivable:
+            return None
+        within = [pair for pair in survivable if pair[1] <= TRIP_RHO_CEILING]
+        if within:
+            # Juiciest survivable disturbance inside the safe band.
+            return max(within, key=lambda pair: pair[1])[0]
+        # All survivable trips run hot; take the gentlest to stay alive.
+        return min(survivable, key=lambda pair: pair[1])[0]
 
     def _event_load_drift(self):
         before = self._max_rho()
@@ -188,15 +227,15 @@ class EventInjector:
             f"thermal rating now {pct}% below nameplate. Judge its loading "
             "against the derated limit."
         )
-        return self._emit(facts, fallback, render=False)
+        return self._emit(facts, fallback, render=False, agent="weather")
 
     # ---- emit helpers ----------------------------------------------------
 
-    def _emit(self, facts, fallback, render=False, game_over=False):
+    def _emit(self, facts, fallback, render=False, game_over=False, agent="grid"):
         text = advisor_voice(self.client, SYSTEM_PROMPT, facts, fallback)
         entry = {
             "kind": "event",
-            "agent": "grid",
+            "agent": agent,
             "text": text,
             "grid_status": self._grid_status(),
             "max_rho": self._max_rho(),

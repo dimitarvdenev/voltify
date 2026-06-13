@@ -16,7 +16,7 @@ demo: check-port clean-run
 	sleep 1; \
 	echo "Open $(URL)"; \
 	echo "Starting agent in inbox mode. Use the web input to talk to it."; \
-	MPLCONFIGDIR="$(MPLCONFIGDIR)" $(PYTHON) -m agent.main --inbox
+	MPLCONFIGDIR="$(MPLCONFIGDIR)" $(PYTHON) -m agent.main --inbox --inject
 
 ui:
 	@mkdir -p "$(MPLCONFIGDIR)"
@@ -25,7 +25,7 @@ ui:
 
 agent:
 	@mkdir -p "$(MPLCONFIGDIR)"
-	@MPLCONFIGDIR="$(MPLCONFIGDIR)" $(PYTHON) -m agent.main --inbox
+	@MPLCONFIGDIR="$(MPLCONFIGDIR)" $(PYTHON) -m agent.main --inbox --inject
 
 test:
 	@MPLCONFIGDIR="$(MPLCONFIGDIR)" $(PYTHON) -m pytest tests/ -v
