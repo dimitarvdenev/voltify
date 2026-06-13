@@ -341,9 +341,15 @@ class GridTools:
                 "error": f"unknown action_id {action_id!r}; "
                 "run search_topology_actions first"
             }
-        result, self._baseline_screen = screen_post_action_env(
-            self.env, self.obs, act, baseline_rows=self._baseline_screen
-        )
+        # MultiMixEnv.copy() temporarily nulls self.env.current_env on the
+        # shared env (grid2op multiMixEnv ~L522) and restores it afterward.
+        # That null window races the injector thread's env access and crashes
+        # with "'NoneType' has no attribute action_space". Serialize the copy
+        # under the same lock the injector and env-step paths use.
+        with self.lock:
+            result, self._baseline_screen = screen_post_action_env(
+                self.env, self.obs, act, baseline_rows=self._baseline_screen
+            )
         result["action_id"] = action_id
         self.screened[action_id] = result
         if action_id in self.meta:
@@ -391,7 +397,13 @@ class GridTools:
         ):
             return json.dumps({"error": f"unknown tool {name!r}"})
         try:
-            result = getattr(self, name)(**arguments)
+            # Serialize every tool call against the injector thread. Operator
+            # tools touch the shared grid2op backend (obs.simulate, env.copy,
+            # env.step); the injector does too. Without this the two threads
+            # race the MultiMixEnv and crash on a transiently-null current_env.
+            # RLock is reentrant, so inner `with self.lock` blocks stay valid.
+            with self.lock:
+                result = getattr(self, name)(**arguments)
         except TypeError as exc:
             result = {"error": f"bad arguments for {name}: {exc}"}
         except Exception as exc:
