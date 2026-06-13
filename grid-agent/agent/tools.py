@@ -13,6 +13,8 @@ from agent.advisors.asset_health import AssetHealth, narrate as asset_narrate, v
 from agent.advisors.blackboard import Blackboard
 from agent.advisors.screening import screen_post_action_env
 from agent.labels import line_label, substation_label
+from agent.tool_blackboard import compact_blackboard, screening_blackboard_item
+from agent.tool_schema import TOOLS_SCHEMA as TOOLS_SCHEMA
 
 
 class GridTools:
@@ -135,7 +137,7 @@ class GridTools:
                 int(line) for line in np.where(~self.obs.line_status)[0]
             ],
             "candidate_scope_subs": self._scoped_subs(n_hops=1),
-            "blackboard": _compact_blackboard(board),
+            "blackboard": compact_blackboard(board),
         }
         if derates:
             effective = [
@@ -530,7 +532,7 @@ class GridTools:
                 "description": meta["description"],
                 "simulated_max_rho": meta["simulated_max_rho"],
             }
-        self.blackboard.append("screening_verdicts", _screening_blackboard_item(result))
+        self.blackboard.append("screening_verdicts", screening_blackboard_item(result))
         return result
 
     def step_external(self, act):
@@ -586,213 +588,3 @@ class GridTools:
             preview = out[: config.MAX_TOOL_RESULT_CHARS - 100]
             out = json.dumps({"truncated": True, "preview": preview}, separators=(",", ":"))
         return out
-
-
-def _screening_blackboard_item(result):
-    worst = result.get("worst_next_contingency") or {}
-    return {
-        "from": "screening",
-        "kind": "post_action_n1",
-        "action_id": result.get("action_id"),
-        "n1_secure": result.get("n1_secure"),
-        "n1_not_worse": result.get("n1_not_worse"),
-        "post_action_rho": result.get("post_action_rho"),
-        "worst_next_contingency": {
-            "line_id": worst.get("line_id"),
-            "post_trip_rho": worst.get("post_trip_rho"),
-            "diverged": worst.get("diverged"),
-        },
-        "screened_outages": result.get("screened_outages"),
-        "insecure_outages": result.get("insecure_outages"),
-        "reason": result.get("baseline_comparison"),
-    }
-
-
-def _compact_blackboard(board):
-    latest_screening = None
-    if board["screening_verdicts"]:
-        latest = board["screening_verdicts"][-1]
-        latest_screening = {
-            "action_id": latest.get("action_id"),
-            "n1_secure": latest.get("n1_secure"),
-            "n1_not_worse": latest.get("n1_not_worse"),
-            "post_action_rho": latest.get("post_action_rho"),
-            "worst_next_contingency": latest.get("worst_next_contingency"),
-            "insecure_outages": latest.get("insecure_outages"),
-        }
-    latest_constraint = None
-    if board["constraints"]:
-        item = board["constraints"][-1]
-        latest_constraint = {
-            "from": item.get("from"),
-            "kind": item.get("kind"),
-            "line_id": item.get("line_id"),
-            "sub": item.get("sub"),
-            "pct": item.get("pct"),
-        }
-    latest_veto = None
-    if board["vetoes"]:
-        item = board["vetoes"][-1]
-        latest_veto = {
-            "from": item.get("from"),
-            "action_id": item.get("action_id"),
-            "level": item.get("level"),
-            "override": item.get("override"),
-            "substation": item.get("substation"),
-        }
-    return {
-        "constraint_count": len(board["constraints"]),
-        "latest_constraint": latest_constraint,
-        "veto_count": len(board["vetoes"]),
-        "latest_veto": latest_veto,
-        "latest_screening_verdict": latest_screening,
-        "availability_count": len(board["availability"]),
-        "clock": board["clock"],
-    }
-
-
-TOOLS_SCHEMA = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_grid_state",
-            "description": (
-                "Current grid state: worst loadings, overloaded lines, "
-                "disconnected lines, and a suggested search scope. All "
-                "values from the power-flow solver."
-            ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_topology_actions",
-            "description": (
-                "Simulate every unitary bus-split at the given substations; "
-                "returns candidates ranked by resulting max line loading. "
-                "Keep scope small (<=8 substations) - the full grid has "
-                "72,107 actions and cannot be searched in operator time."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "substations": {
-                        "type": "array",
-                        "items": {"type": "integer"},
-                        "description": (
-                            "Substation ids to search, e.g. candidate_scope_subs "
-                            "from get_grid_state."
-                        ),
-                    },
-                    "exclude_substations": {
-                        "type": "array",
-                        "items": {"type": "integer"},
-                        "description": (
-                            "Substations unavailable for switching, e.g. crew on site."
-                        ),
-                    },
-                },
-                "required": ["substations"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_redispatch_actions",
-            "description": (
-                "Escalation step 3 (expensive). Simulate generator redispatch "
-                "moves - shifting MW off dispatchable units, auto-balanced "
-                "across the fleet - and return candidates ranked by resulting "
-                "max line loading. Use when topology switching cannot relieve "
-                "the overload. Candidates feed the same simulate -> "
-                "check_asset_health -> screen_post_action -> apply_action chain."
-            ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_curtailment_actions",
-            "description": (
-                "Escalation step 4 (last resort, most expensive - EnWG 13a "
-                "compensation). Simulate curtailing renewable generation and "
-                "return candidates ranked by resulting max line loading. Use "
-                "only after switching and redispatch are exhausted. Candidates "
-                "feed the same simulate -> check_asset_health -> "
-                "screen_post_action -> apply_action chain."
-            ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "simulate_action",
-            "description": (
-                "Simulate one candidate from a previous search against the "
-                "current state. Solver results only."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"action_id": {"type": "string"}},
-                "required": ["action_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "check_asset_health",
-            "description": (
-                "Ask the Asset Health advisor whether a candidate action is "
-                "authorized given equipment condition (partial-discharge "
-                "flags, breaker switching-cycle budget). Returns verdict "
-                "ok | warn | block. A block requires an operator decision "
-                "to override. Use before apply_action."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"action_id": {"type": "string"}},
-                "required": ["action_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "screen_post_action",
-            "description": (
-                "Ask the Screening advisor to run N-1 screening on the "
-                "POST-action topology for a candidate action. Use after "
-                "simulate_action and before apply_action. Returns whether "
-                "the fix is N-1 secure and the worst next contingency."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"action_id": {"type": "string"}},
-                "required": ["action_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "apply_action",
-            "description": (
-                "Apply an action to the REAL grid, then verify stability over "
-                "the next steps. Protocol-enforced: requires prior "
-                "check_asset_health and screen_post_action for this "
-                "action_id; an asset-health block requires an operator "
-                "override_veto decision."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"action_id": {"type": "string"}},
-                "required": ["action_id"],
-            },
-        },
-    },
-]
