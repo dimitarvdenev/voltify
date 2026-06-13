@@ -49,27 +49,33 @@ def screen_post_action_env(env, current_obs, action, baseline_rows=None):
     post_env = env.copy()
     post_obs, _, post_done, _ = post_env.step(action)
     if post_done:
-        return (
-            {
-                "post_action_rho": None,
-                "n1_secure": False,
-                "n1_not_worse": False,
-                "post_action_diverged": True,
-                "worst_next_contingency": None,
-                "new_fragilities": [],
-                "screened_outages": 0,
-                "insecure_outages": 0,
-                "screen_seconds": round(time.time() - t0, 1),
-                "baseline_comparison": (
-                    "candidate action collapses the grid before N-1 screening"
-                ),
-            },
-            baseline_rows,
-        )
+        return _post_action_diverged_result(t0), baseline_rows
 
     rows = screen_topology(post_env, post_obs)
     if baseline_rows is None:
         baseline_rows = screen_topology(env, current_obs)
+    comparison = _compare_screening_rows(rows, baseline_rows)
+    return _post_action_result(post_obs, rows, comparison, t0), baseline_rows
+
+
+def _post_action_diverged_result(t0):
+    return {
+        "post_action_rho": None,
+        "n1_secure": False,
+        "n1_not_worse": False,
+        "post_action_diverged": True,
+        "worst_next_contingency": None,
+        "new_fragilities": [],
+        "screened_outages": 0,
+        "insecure_outages": 0,
+        "screen_seconds": round(time.time() - t0, 1),
+        "baseline_comparison": (
+            "candidate action collapses the grid before N-1 screening"
+        ),
+    }
+
+
+def _compare_screening_rows(rows, baseline_rows):
     base_insecure_ids = {row["line_id"] for row in baseline_rows if row["insecure"]}
     post_insecure = [row for row in rows if row["insecure"]]
     new_fragilities = [
@@ -77,49 +83,61 @@ def screen_post_action_env(env, current_obs, action, baseline_rows=None):
     ]
     post_secure_ids = {row["line_id"] for row in rows if not row["insecure"]}
     resolved = sorted(base_insecure_ids & post_secure_ids)
+    worst = _worst_contingency(new_fragilities, post_insecure, rows, base_insecure_ids)
+    return {
+        "base_insecure_ids": base_insecure_ids,
+        "post_insecure": post_insecure,
+        "new_fragilities": new_fragilities,
+        "resolved": resolved,
+        "worst": worst,
+        "text": _comparison_text(new_fragilities, post_insecure, resolved, worst),
+    }
 
+
+def _worst_contingency(new_fragilities, post_insecure, rows, base_insecure_ids):
     worst = _worst_outage(new_fragilities or post_insecure or rows)
     if worst is not None:
         worst = dict(worst)
         worst["recovery_action_exists"] = None
         worst["recovery_note"] = "not searched by screen_post_action"
         worst["fragility_is_new"] = worst["line_id"] not in base_insecure_ids
+    return worst
 
+
+def _comparison_text(new_fragilities, post_insecure, resolved, worst):
     if new_fragilities:
-        comparison = (
+        return (
             f"fix INTRODUCES {len(new_fragilities)} fragilit"
             f"{'y' if len(new_fragilities) == 1 else 'ies'} the current "
             f"topology absorbs (worst: line {worst['line_id']}); "
             f"{len(post_insecure) - len(new_fragilities)} further insecure "
             "outages are pre-existing"
         )
-    elif post_insecure:
-        comparison = (
+    if post_insecure:
+        return (
             f"all {len(post_insecure)} insecure outages are pre-existing in "
             "the current stressed topology; the fix does not worsen N-1"
             + (f" and resolves {len(resolved)} of them" if resolved else "")
         )
-    else:
-        comparison = "post-action topology is fully N-1 secure"
+    return "post-action topology is fully N-1 secure"
 
-    return (
-        {
-            "post_action_rho": round(float(post_obs.rho.max()), 3),
-            "n1_secure": not post_insecure,
-            "n1_not_worse": not new_fragilities,
-            "worst_next_contingency": worst,
-            "new_fragilities": [
-                _fragility_summary(row) for row in new_fragilities[:3]
-            ],
-            "baseline_insecure_outages": len(base_insecure_ids),
-            "resolved_fragilities": len(resolved),
-            "baseline_comparison": comparison,
-            "screened_outages": len(rows),
-            "insecure_outages": len(post_insecure),
-            "screen_seconds": round(time.time() - t0, 1),
-        },
-        baseline_rows,
-    )
+
+def _post_action_result(post_obs, rows, comparison, t0):
+    new_fragilities = comparison["new_fragilities"]
+    post_insecure = comparison["post_insecure"]
+    return {
+        "post_action_rho": round(float(post_obs.rho.max()), 3),
+        "n1_secure": not post_insecure,
+        "n1_not_worse": not new_fragilities,
+        "worst_next_contingency": comparison["worst"],
+        "new_fragilities": [_fragility_summary(row) for row in new_fragilities[:3]],
+        "baseline_insecure_outages": len(comparison["base_insecure_ids"]),
+        "resolved_fragilities": len(comparison["resolved"]),
+        "baseline_comparison": comparison["text"],
+        "screened_outages": len(rows),
+        "insecure_outages": len(post_insecure),
+        "screen_seconds": round(time.time() - t0, 1),
+    }
 
 
 def _fragility_summary(row):

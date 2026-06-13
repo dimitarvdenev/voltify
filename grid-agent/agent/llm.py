@@ -55,52 +55,75 @@ def run_loop(
     """Run tool calls until the model produces plain text."""
     emit = on_event or (lambda kind, payload: None)
     for _ in range(max_iterations):
-        resp = client.chat.completions.create(
-            model=model, messages=messages, tools=tools_schema
-        )
-        message = resp.choices[0].message
+        message = _next_message(client, model, messages, tools_schema)
         messages.append(_assistant_to_dict(message))
         text = (message.content or "").strip()
         if not message.tool_calls:
-            emit("narration", {"text": text})
-            if _promises_tool_without_call(text):
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "You ended with a promised tool action but did not "
-                            "issue the tool call. Continue now by issuing the "
-                            "promised tool call. Do not stop at narration."
-                        ),
-                    }
-                )
+            final = _handle_plain_text(text, messages, emit)
+            if final is None:
                 continue
-            return text
-        # Narration may accompany tool calls; surface it so the reasoning
-        # behind each step still reaches the feed instead of being dropped.
-        if text:
-            emit("narration", {"text": text})
-        for tool_call in message.tool_calls:
-            try:
-                args = json.loads(tool_call.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            result = dispatch(tool_call.function.name, args)
-            emit(
-                "tool",
-                {
-                    "tool": tool_call.function.name,
-                    "arguments": args,
-                    "result": result,
-                },
-            )
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": result,
-                }
-            )
+            return final
+        _handle_tool_calls(message, text, messages, dispatch, emit)
+    return _iteration_limit_text(emit)
+
+
+def _next_message(client, model, messages, tools_schema):
+    resp = client.chat.completions.create(
+        model=model, messages=messages, tools=tools_schema
+    )
+    return resp.choices[0].message
+
+
+def _handle_plain_text(text, messages, emit):
+    emit("narration", {"text": text})
+    if not _promises_tool_without_call(text):
+        return text
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "You ended with a promised tool action but did not "
+                "issue the tool call. Continue now by issuing the "
+                "promised tool call. Do not stop at narration."
+            ),
+        }
+    )
+    return None
+
+
+def _handle_tool_calls(message, text, messages, dispatch, emit):
+    # Narration may accompany tool calls; surface it so the reasoning
+    # behind each step still reaches the feed instead of being dropped.
+    if text:
+        emit("narration", {"text": text})
+    for tool_call in message.tool_calls:
+        args = _tool_arguments(tool_call)
+        result = dispatch(tool_call.function.name, args)
+        emit(
+            "tool",
+            {
+                "tool": tool_call.function.name,
+                "arguments": args,
+                "result": result,
+            },
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": result,
+            }
+        )
+
+
+def _tool_arguments(tool_call):
+    try:
+        return json.loads(tool_call.function.arguments or "{}")
+    except json.JSONDecodeError:
+        return {}
+
+
+def _iteration_limit_text(emit):
     text = (
         "Stopped: iteration limit reached without a final answer. "
         "Grid state may still need attention."

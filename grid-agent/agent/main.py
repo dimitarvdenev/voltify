@@ -51,6 +51,27 @@ class Inbox:
 
 
 def main():
+    args = _parse_args()
+    tools = GridTools()
+    client = make_client()
+    writer = StepWriter(config.RUN_DIR)
+    renderer = GridRenderer(tools.env.observation_space, config.RENDER_DIR)
+    inbox = Inbox(config.RUN_DIR) if args.inbox else None
+
+    emit_render = _render_emitter(tools, renderer)
+    _write_opening_entry(writer, tools, emit_render)
+    weather_bulletin = _publish_weather(args, tools, writer, client)
+    messages = _initial_messages(weather_bulletin)
+    on_event = _event_handler(tools, writer, emit_render)
+    injector = _start_injector(args, tools, writer, emit_render, client)
+    try:
+        _operator_loop(inbox, messages, writer, client, tools, on_event)
+    finally:
+        if injector:
+            injector.stop()
+
+
+def _parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--inbox",
@@ -74,17 +95,10 @@ def main():
         default=config.INJECTOR_PERIOD_SEC,
         help="mean seconds between injected events (default %(default)s)",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    tools = GridTools()
-    client = make_client()
-    writer = StepWriter(config.RUN_DIR)
-    renderer = GridRenderer(tools.env.observation_space, config.RENDER_DIR)
-    inbox = Inbox(config.RUN_DIR) if args.inbox else None
 
-    def grid_status():
-        return "rescued" if tools.obs.rho.max() < 1.0 else "overloaded"
-
+def _render_emitter(tools, renderer):
     def emit_render(tag):
         # Lock so a render never reads obs mid env-step and two renders
         # (operator loop vs injector) never run concurrently.
@@ -93,36 +107,44 @@ def main():
             full, zoom = renderer.render(tools.obs, tag, focus_subs=scope)
         return _artifact_relpath(full), _artifact_relpath(zoom)
 
+    return emit_render
+
+
+def _write_opening_entry(writer, tools, emit_render):
     full, zoom = emit_render("step_0_open")
     writer.add(
         kind="narration",
         text="Connected to grid.",
-        grid_status=grid_status(),
+        grid_status=_grid_status(tools),
         max_rho=round(float(tools.obs.rho.max()), 3),
         render_full=full,
         render_zoom=zoom,
     )
 
-    weather_bulletin = None
-    if not args.no_weather:
-        # reactive Weather advisor: posts derate constraints to the
-        # blackboard before the Ops agent's first look at the grid
-        assessment, bulletin = weather.publish(tools.blackboard, client)
-        writer.add(
-            kind="constraint",
-            agent="weather",
-            text=bulletin,
-            grid_status=grid_status(),
-            max_rho=round(float(tools.obs.rho.max()), 3),
-        )
-        weather_bulletin = bulletin
-        print(f"\nweather> {bulletin}\n")
 
+def _publish_weather(args, tools, writer, client):
+    if args.no_weather:
+        return None
+    # Reactive Weather advisor: posts derate constraints to the blackboard
+    # before the Ops agent's first look at the grid.
+    _, bulletin = weather.publish(tools.blackboard, client)
+    writer.add(
+        kind="constraint",
+        agent="weather",
+        text=bulletin,
+        grid_status=_grid_status(tools),
+        max_rho=round(float(tools.obs.rho.max()), 3),
+    )
+    print(f"\nweather> {bulletin}\n")
+    return bulletin
+
+
+def _event_handler(tools, writer, emit_render):
     def on_event(kind, payload):
         entry = {
             "kind": kind,
             "agent": "ops",
-            "grid_status": grid_status(),
+            "grid_status": _grid_status(tools),
             "max_rho": round(float(tools.obs.rho.max()), 3),
         }
         if kind == "tool":
@@ -143,58 +165,74 @@ def main():
             entry["text"] = payload["text"]
         writer.add(**entry)
 
+    return on_event
+
+
+def _initial_messages(weather_bulletin):
     brief = SCENARIO_BRIEF
     if weather_bulletin:
         brief += f"\nAdvisor bulletin (Weather): {weather_bulletin}\n"
-    messages = [
+    return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": brief},
     ]
 
-    injector = None
-    if args.inject:
-        injector = EventInjector(
-            tools,
-            writer,
-            render_fn=emit_render,
-            client=client,
-            period=args.inject_period,
-        )
-        injector.start()
-        print(f"\nevents> injector live (~{args.inject_period:.0f}s cadence)\n")
 
+def _start_injector(args, tools, writer, emit_render, client):
+    if not args.inject:
+        return None
+    injector = EventInjector(
+        tools,
+        writer,
+        render_fn=emit_render,
+        client=client,
+        period=args.inject_period,
+    )
+    injector.start()
+    print(f"\nevents> injector live (~{args.inject_period:.0f}s cadence)\n")
+    return injector
+
+
+def _operator_loop(inbox, messages, writer, client, tools, on_event):
     print("Operator console. Type message (or 'quit').")
-    try:
-        while True:
-            if inbox:
-                operator_msg = inbox.next_message()
-            else:
-                operator_msg = input("operator> ").strip()
-            if operator_msg.lower() in ("quit", "exit"):
-                break
-            if not operator_msg:
-                continue
-            if len(messages) > 2 or messages[-1]["role"] != "user":
-                messages.append({"role": "user", "content": operator_msg})
-            else:
-                messages[-1]["content"] += "\n\nOperator: " + operator_msg
-            writer.add(kind="operator", text=operator_msg)
-            writer.set_busy("Operations agent reasoning…")
-            try:
-                final = run_loop(
-                    client,
-                    config.LLM_MODEL,
-                    messages,
-                    TOOLS_SCHEMA,
-                    tools.dispatch,
-                    on_event=on_event,
-                )
-            finally:
-                writer.clear_busy()
-            print(f"\nagent> {final}\n")
-    finally:
-        if injector:
-            injector.stop()
+    while True:
+        operator_msg = _next_operator_message(inbox)
+        if operator_msg.lower() in ("quit", "exit"):
+            break
+        if not operator_msg:
+            continue
+        _append_operator_message(messages, operator_msg)
+        writer.add(kind="operator", text=operator_msg)
+        writer.set_busy("Operations agent reasoning…")
+        try:
+            final = run_loop(
+                client,
+                config.LLM_MODEL,
+                messages,
+                TOOLS_SCHEMA,
+                tools.dispatch,
+                on_event=on_event,
+            )
+        finally:
+            writer.clear_busy()
+        print(f"\nagent> {final}\n")
+
+
+def _next_operator_message(inbox):
+    if inbox:
+        return inbox.next_message()
+    return input("operator> ").strip()
+
+
+def _append_operator_message(messages, operator_msg):
+    if len(messages) > 2 or messages[-1]["role"] != "user":
+        messages.append({"role": "user", "content": operator_msg})
+    else:
+        messages[-1]["content"] += "\n\nOperator: " + operator_msg
+
+
+def _grid_status(tools):
+    return "rescued" if tools.obs.rho.max() < 1.0 else "overloaded"
 
 
 def _asset_feed(result_json):

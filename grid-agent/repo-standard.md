@@ -147,13 +147,12 @@ explicitly.
 
 ## 7. Active Debt
 
-* [ ] **`agent/tools.py`:** Currently about 800 lines — over the hard limit
-  (500). It combines Grid2Op environment access, tool registry/execution,
-  topology search, simulation, safety checks, and presentation-shaped return
-  payloads. It must be decomposed before receiving unrelated feature work.
-* [ ] **`agent/render.py`:** Currently about 460 lines — over target (300) and
-  close to the hard limit. Keep new behavior out of this file unless directly
-  rendering-related; split HTML/data preparation from rendering if it grows.
+* [ ] **`agent/action_search.py`:** Currently about 450 lines — over target
+  (300) but below the hard limit. It is one domain (candidate remedial-action
+  search), but split topology vs generation-action search if it grows.
+* [ ] **`agent/render.py`:** Currently about 330 lines — over target (300) but
+  below the hard limit after template extraction. Keep new behavior
+  rendering-related; split layout generation if it grows.
 * [ ] **`agent/advisors/injector.py`:** Currently about 300 lines — at the file
   length target. Split scenario loading, message injection, and timing/runtime
   coordination if it grows.
