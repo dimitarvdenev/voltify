@@ -39,8 +39,11 @@ for line_id in range(env.n_line):
     worst = sim_obs.rho.max() if not sim_done else np.inf
     results.append((line_id, worst, sim_done))
 elapsed = time.time() - t0
-dangerous = [(l, r, d) for l, r, d in results if r > 1.0 or d]
-diverged = [l for l, r, d in results if d]
+dangerous = [
+    (line_id, rho, diverged) for line_id, rho, diverged in results
+    if rho > 1.0 or diverged
+]
+diverged = [line_id for line_id, _, diverged in results if diverged]
 print(f"\nN-1 screening: {len(results)} outages in {elapsed:.1f}s "
       f"({elapsed / len(results) * 1000:.0f} ms each)")
 print(f"dangerous (rho>1 or diverged): {len(dangerous)} / {len(results)}, "

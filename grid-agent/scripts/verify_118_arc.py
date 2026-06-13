@@ -98,7 +98,6 @@ def best_topology_rescue(env, obs_after, subs):
 
 def main():
     env = grid2op.make("l2rpn_neurips_2020_track2_small")
-    do_nothing = env.action_space({})
 
     for chronic_idx, obs in find_healthy_snapshots(env):
         base_rho = float(obs.rho.max())

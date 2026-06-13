@@ -91,8 +91,7 @@ def main():
         with tools.lock:
             scope = tools.get_grid_state()["candidate_scope_subs"] or None
             full, zoom = renderer.render(tools.obs, tag, focus_subs=scope)
-        rel = lambda path: os.path.relpath(path, config.ROOT)
-        return rel(full), rel(zoom)
+        return _artifact_relpath(full), _artifact_relpath(zoom)
 
     full, zoom = emit_render("step_0_open")
     writer.add(
@@ -207,6 +206,10 @@ def _asset_feed(result_json):
         return "verdict", "Asset Health error: " + result["error"]
     kind = "veto" if result.get("verdict") == "block" else "verdict"
     return kind, result.get("narration", "")
+
+
+def _artifact_relpath(path):
+    return os.path.relpath(path, config.ROOT)
 
 
 def _screening_feed_text(result_json):

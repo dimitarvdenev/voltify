@@ -12,8 +12,13 @@ from agent import config
 from agent.advisors.asset_health import AssetHealth, narrate as asset_narrate, veto_item
 from agent.advisors.blackboard import Blackboard
 from agent.advisors.screening import screen_post_action_env
-from agent.labels import line_label, substation_label
-from agent.tool_blackboard import compact_blackboard, screening_blackboard_item
+from agent.grid_summary import (
+    label_substation,
+    line_summary,
+    scoped_substations,
+    summarize_grid_state,
+)
+from agent.tool_blackboard import screening_blackboard_item
 from agent.tool_schema import TOOLS_SCHEMA as TOOLS_SCHEMA
 
 
@@ -41,117 +46,17 @@ class GridTools:
         self.screened = {}
         self._baseline_screen = None
 
-    def _degree(self):
-        degree = [0 for _ in range(self.env.n_sub)]
-        for line_id in range(self.env.n_line):
-            degree[int(self.obs.line_or_to_subid[line_id])] += 1
-            degree[int(self.obs.line_ex_to_subid[line_id])] += 1
-        return degree
-
-    def _incident_rho(self, obs=None):
-        obs = obs or self.obs
-        incident = [0.0 for _ in range(self.env.n_sub)]
-        for line_id, rho in enumerate(obs.rho):
-            a = int(obs.line_or_to_subid[line_id])
-            b = int(obs.line_ex_to_subid[line_id])
-            incident[a] = max(incident[a], float(rho))
-            incident[b] = max(incident[b], float(rho))
-        return incident
-
     def _substation_label(self, sub_id, obs=None):
-        degree = self._degree()
-        incident = self._incident_rho(obs)
-        return substation_label(int(sub_id), degree[int(sub_id)], incident[int(sub_id)])
+        return label_substation(self.env, obs or self.obs, sub_id)
 
     def _line_summary(self, line_id, obs=None):
-        obs = obs or self.obs
-        from_sub = int(obs.line_or_to_subid[line_id])
-        to_sub = int(obs.line_ex_to_subid[line_id])
-        from_label = self._substation_label(from_sub, obs)
-        to_label = self._substation_label(to_sub, obs)
-        return {
-            "line_id": int(line_id),
-            "line_label": line_label(line_id, from_label, to_label),
-            "from_sub": from_sub,
-            "to_sub": to_sub,
-            "rho": round(float(obs.rho[line_id]), 3),
-        }
-
-    def _substation_summary(self, sub_id, obs=None):
-        return {"sub": int(sub_id), "label": self._substation_label(sub_id, obs)}
+        return line_summary(self.env, obs or self.obs, line_id)
 
     def _scoped_subs(self, n_hops=1):
-        """Substations at overloaded-line endpoints, grown by n hops."""
-        over = np.where(self.obs.rho > 1.0)[0]
-        subs = set()
-        for line_id in over:
-            subs.add(int(self.obs.line_or_to_subid[line_id]))
-            subs.add(int(self.obs.line_ex_to_subid[line_id]))
-        for _ in range(n_hops):
-            grown = set(subs)
-            for line_id in range(self.env.n_line):
-                a = int(self.obs.line_or_to_subid[line_id])
-                b = int(self.obs.line_ex_to_subid[line_id])
-                if a in subs:
-                    grown.add(b)
-                if b in subs:
-                    grown.add(a)
-            subs = grown
-        return sorted(subs)
-
-    def _derate_map(self, board):
-        """line_id -> derate pct from weather constraints on the blackboard."""
-        derates = {}
-        for item in board.get("constraints", []):
-            if item.get("kind") == "derate" and item.get("line_id") is not None:
-                derates[int(item["line_id"])] = float(item["pct"])
-        return derates
-
-    def _apply_derates(self, summary, derates):
-        pct = derates.get(summary["line_id"])
-        if pct is not None:
-            summary["derate_pct"] = pct
-            summary["effective_rho"] = round(
-                summary["rho"] / (1.0 - pct / 100.0), 3
-            )
-        return summary
+        return scoped_substations(self.env, self.obs, n_hops=n_hops)
 
     def get_grid_state(self):
-        rho = self.obs.rho
-        overloaded = np.where(rho > 1.0)[0]
-        top = np.argsort(-rho)[: config.TOP_K_LOADED_LINES]
-        board = self.blackboard.read()
-        derates = self._derate_map(board)
-        state = {
-            "max_rho": round(float(rho.max()), 3),
-            "n_overloaded": int(len(overloaded)),
-            "overloaded_lines": [
-                self._apply_derates(self._line_summary(line), derates)
-                for line in overloaded
-            ],
-            "top_loaded_lines": [
-                self._apply_derates(self._line_summary(line), derates)
-                for line in top
-            ],
-            "disconnected_lines": [
-                int(line) for line in np.where(~self.obs.line_status)[0]
-            ],
-            "candidate_scope_subs": self._scoped_subs(n_hops=1),
-            "blackboard": compact_blackboard(board),
-        }
-        if derates:
-            effective = [
-                float(rho[line]) / (1.0 - pct / 100.0)
-                for line, pct in derates.items()
-            ]
-            state["max_effective_rho"] = round(
-                max(state["max_rho"], max(effective)), 3
-            )
-            state["derate_note"] = (
-                "weather derate active: effective_rho is the binding "
-                "loading on derated lines, not nameplate rho"
-            )
-        return state
+        return summarize_grid_state(self.env, self.obs, self.blackboard.read())
 
     def _action_effects(self, act, sim_obs):
         reconnects = [
