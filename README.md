@@ -12,6 +12,8 @@ It observes the grid, searches remedial actions, simulates them with a real
 power-flow solver, consults its advisors, and applies only protocol-approved
 actions.
 
+![Voltify UI — 118-bus topology blueprint and agent comms](grid-agent/artifacts/snapshots/01_ui_overview.png)
+
 The project lives in [`grid-agent/`](grid-agent/):
 
 - **Run it:** [`grid-agent/README.md`](grid-agent/README.md) — quickstart and `make demo`.

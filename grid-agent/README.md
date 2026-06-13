@@ -25,6 +25,10 @@ artifacts/   Checked-in demo outputs, screenshots, and video
 
 ## Spike result (verified)
 
+| Crisis at open (rho 1.31, line 177 overloaded) | Rescued (rho 0.79, zero overloads) |
+|:---:|:---:|
+| ![Grid at crisis](artifacts/snapshots/02_grid_crisis.png) | ![Grid rescued](artifacts/snapshots/03_grid_rescued.png) |
+
 The full demo arc works end to end on the 118-bus grid
 (`scenarios/arc_118.json`, "crisis-at-open"):
 
