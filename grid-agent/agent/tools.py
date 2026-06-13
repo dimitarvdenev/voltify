@@ -200,6 +200,7 @@ class GridTools:
                 self.registry[action_id] = act
                 self.meta[action_id] = {
                     "action_id": action_id,
+                    "kind": "topology",
                     "substation": sub_id,
                     "substation_label": self._substation_label(sub_id),
                     "description": f"bus-split at {self._substation_label(sub_id)}",
@@ -244,6 +245,159 @@ class GridTools:
                 self._line_summary(line, sim_obs) for line in over
             ],
             "reconnects_lines": reconnects,
+        }
+
+    def _gen_label(self, gen_id):
+        gtype = str(self.env.gen_type[gen_id])
+        sub = int(self.env.gen_to_subid[gen_id])
+        return f"{gtype} unit G-{int(gen_id):02d} @ {self._substation_label(sub)}"
+
+    def _register_gen_action(self, action_id, act, sim_obs, kind, description,
+                             cost_class, generators, mw):
+        self.registry[action_id] = act
+        self.meta[action_id] = {
+            "action_id": action_id,
+            "kind": kind,
+            "description": description,
+            "generators": generators,
+            "mw_shifted": round(float(mw), 1),
+            "simulated_max_rho": round(float(sim_obs.rho.max()), 3),
+            "simulated_n_overloaded": int((sim_obs.rho > 1.0).sum()),
+            "cost_class": cost_class,
+        }
+        return self.meta[action_id]
+
+    def search_redispatch_actions(self, max_candidates=None):
+        """Enumerate single- and bulk-generator redispatch moves, simulate
+        each, and return those that beat the current worst loading. Redispatch
+        shifts MW off a generator; grid2op auto-balances the deviation across
+        the rest of the dispatchable fleet, so the solver result is the real
+        effect on line loadings."""
+        k = max_candidates or config.TOP_K_CANDIDATES
+        t0 = time.time()
+        e, o = self.env, self.obs
+        current = round(float(o.rho.max()), 3)
+        producers = [
+            g for g in range(e.n_gen)
+            if e.gen_redispatchable[g] and float(o.gen_p[g]) > 1.0
+        ]
+        results, n_tried = [], 0
+        # single-generator down- and up-ramps (let the solver judge direction)
+        for g in producers:
+            moves = []
+            down = min(float(e.gen_max_ramp_down[g]), float(o.gen_p[g]))
+            if down > 0.1:
+                moves.append(-down)
+            up = float(e.gen_max_ramp_up[g])
+            if up > 0.1 and float(o.gen_p[g]) < float(e.gen_pmax[g]) - 0.1:
+                moves.append(up)
+            for delta in moves:
+                act = e.action_space({"redispatch": [(g, delta)]})
+                sim_obs, _, sim_done, _ = o.simulate(act)
+                n_tried += 1
+                if sim_done:
+                    continue
+                aid = f"rd-{g:02d}-{'dn' if delta < 0 else 'up'}"
+                verb = "reduce" if delta < 0 else "raise"
+                results.append(self._register_gen_action(
+                    aid, act, sim_obs, "redispatch",
+                    f"{verb} {self._gen_label(g)} by {abs(delta):.1f} MW",
+                    "redispatch (expensive)", [int(g)], abs(delta),
+                ))
+        # bulk: shed the biggest producers together (larger flow shift)
+        top = sorted(producers, key=lambda g: float(o.gen_p[g]), reverse=True)[:5]
+        bulk = [
+            (int(g), -min(float(e.gen_max_ramp_down[g]), float(o.gen_p[g])))
+            for g in top
+            if min(float(e.gen_max_ramp_down[g]), float(o.gen_p[g])) > 0.1
+        ]
+        if len(bulk) >= 2:
+            act = e.action_space({"redispatch": bulk})
+            sim_obs, _, sim_done, _ = o.simulate(act)
+            n_tried += 1
+            if not sim_done:
+                mw = sum(abs(d) for _, d in bulk)
+                results.append(self._register_gen_action(
+                    "rd-bulk-dn", act, sim_obs, "redispatch",
+                    f"reduce {len(bulk)} largest dispatchable units by {mw:.1f} MW total",
+                    "redispatch (expensive)", [g for g, _ in bulk], mw,
+                ))
+        # Only surface moves that actually beat the current worst loading;
+        # an empty list is the honest signal that redispatch cannot help here.
+        results = [r for r in results if r["simulated_max_rho"] < current - 1e-6]
+        results.sort(key=lambda r: r["simulated_max_rho"])
+        return {
+            "actions_simulated": n_tried,
+            "current_max_rho": current,
+            "search_seconds": round(time.time() - t0, 1),
+            "candidates": results[:k],
+            "note": (
+                "redispatch is expensive vs switching; use only when topology "
+                "cannot relieve the overload (escalation step 3). Empty "
+                "candidates means redispatch does not relieve this overload."
+            ),
+        }
+
+    def search_curtailment_actions(self, max_candidates=None):
+        """Enumerate renewable-curtailment moves (cap renewable output as a
+        fraction of nameplate), simulate each, and return those that beat the
+        current worst loading. Curtailment is the last-resort, most expensive
+        remedial action (EnWG 13a compensation)."""
+        k = max_candidates or config.TOP_K_CANDIDATES
+        t0 = time.time()
+        e, o = self.env, self.obs
+        current = round(float(o.rho.max()), 3)
+        producers = [
+            g for g in range(e.n_gen)
+            if e.gen_renewable[g] and float(o.gen_p[g]) > 1.0
+        ]
+        results, n_tried = [], 0
+        for g in producers:
+            pmax = float(e.gen_pmax[g])
+            if pmax <= 0:
+                continue
+            cur_ratio = float(o.gen_p[g]) / pmax
+            for frac, tag in ((0.5, "half"), (0.0, "off")):
+                ratio = max(0.0, cur_ratio * frac)
+                act = e.action_space({"curtail": [(g, ratio)]})
+                sim_obs, _, sim_done, _ = o.simulate(act)
+                n_tried += 1
+                if sim_done:
+                    continue
+                mw = float(o.gen_p[g]) * (1.0 - frac)
+                results.append(self._register_gen_action(
+                    f"ct-{g:02d}-{tag}", act, sim_obs, "curtail",
+                    f"curtail {self._gen_label(g)} by {mw:.1f} MW "
+                    f"({'to zero' if frac == 0 else 'by half'})",
+                    "curtailment (last resort)", [int(g)], mw,
+                ))
+        # bulk: curtail all producing renewables to zero
+        if len(producers) >= 2:
+            bulk = [(int(g), 0.0) for g in producers]
+            act = e.action_space({"curtail": bulk})
+            sim_obs, _, sim_done, _ = o.simulate(act)
+            n_tried += 1
+            if not sim_done:
+                mw = sum(float(o.gen_p[g]) for g in producers)
+                results.append(self._register_gen_action(
+                    "ct-bulk-off", act, sim_obs, "curtail",
+                    f"curtail all {len(producers)} producing renewables "
+                    f"({mw:.1f} MW)",
+                    "curtailment (last resort)", [int(g) for g in producers], mw,
+                ))
+        results = [r for r in results if r["simulated_max_rho"] < current - 1e-6]
+        results.sort(key=lambda r: r["simulated_max_rho"])
+        return {
+            "actions_simulated": n_tried,
+            "current_max_rho": current,
+            "search_seconds": round(time.time() - t0, 1),
+            "candidates": results[:k],
+            "note": (
+                "curtailment is the most expensive remedial action; use only "
+                "after switching and redispatch are exhausted (escalation "
+                "step 4). Empty candidates means curtailment does not relieve "
+                "this overload."
+            ),
         }
 
     def _operator_override(self, action_id):
@@ -306,7 +460,7 @@ class GridTools:
             "worst_rho_during_check": round(worst_seen, 3),
         }
         meta = self.meta.get(action_id)
-        if meta:
+        if meta and meta.get("kind") == "topology":
             record = self.asset_health.record_switch(
                 meta["substation"], meta["switching_ops"]
             )
@@ -315,6 +469,9 @@ class GridTools:
                 "ops_used_month": record["ops_used_month"],
                 "ops_remaining_month": record["ops_remaining_month"],
             }
+        elif meta and meta.get("kind") in ("redispatch", "curtail"):
+            result["cost_class"] = meta.get("cost_class")
+            result["mw_shifted"] = meta.get("mw_shifted")
         return result
 
     def check_asset_health(self, action_id):
@@ -324,6 +481,21 @@ class GridTools:
                 "error": f"unknown action_id {action_id!r}; "
                 "run search_topology_actions first"
             }
+        if meta.get("kind") != "topology":
+            # Redispatch/curtailment switch no breakers - equipment condition
+            # is not a constraint, so Asset Health has no veto here.
+            check = {
+                "action_id": action_id,
+                "verdict": "ok",
+                "override": None,
+                "reasons": [],
+                "asset_note": (
+                    f"{meta.get('kind')} action: no breaker switching, "
+                    "Asset Health has no objection"
+                ),
+            }
+            self.asset_checked[action_id] = check
+            return check
         check = self.asset_health.check_action(
             meta["substation"], meta["switching_ops"]
         )
@@ -390,6 +562,8 @@ class GridTools:
         if name not in (
             "get_grid_state",
             "search_topology_actions",
+            "search_redispatch_actions",
+            "search_curtailment_actions",
             "simulate_action",
             "check_asset_health",
             "screen_post_action",
@@ -520,6 +694,36 @@ TOOLS_SCHEMA = [
                 },
                 "required": ["substations"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_redispatch_actions",
+            "description": (
+                "Escalation step 3 (expensive). Simulate generator redispatch "
+                "moves - shifting MW off dispatchable units, auto-balanced "
+                "across the fleet - and return candidates ranked by resulting "
+                "max line loading. Use when topology switching cannot relieve "
+                "the overload. Candidates feed the same simulate -> "
+                "check_asset_health -> screen_post_action -> apply_action chain."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_curtailment_actions",
+            "description": (
+                "Escalation step 4 (last resort, most expensive - EnWG 13a "
+                "compensation). Simulate curtailing renewable generation and "
+                "return candidates ranked by resulting max line loading. Use "
+                "only after switching and redispatch are exhausted. Candidates "
+                "feed the same simulate -> check_asset_health -> "
+                "screen_post_action -> apply_action chain."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
     {
